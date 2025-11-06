@@ -1,0 +1,73 @@
+# DPPO PID Controller Configuration
+
+# Plant Dynamics
+plant:
+  J: 1.0                    # Inertia
+  B: 0.5                    # Damping coefficient
+
+# Time Step Configuration
+timing:
+  dt_inner: 0.005           # Inner loop time step (200 Hz)
+  dt_outer: 0.05            # Outer loop time step (20 Hz)
+  n_inner_steps: 10         # Steps per RL action (dt_outer / dt_inner)
+
+# Reference Signal
+reference:
+  r_min: -2.0               # Minimum setpoint
+  r_max: 2.0                # Maximum setpoint
+  change_interval: 2.0      # Seconds between setpoint changes
+
+# Disturbance
+disturbance:
+  enabled: true
+  magnitude: 0.2            # Max disturbance force
+  duration: 0.1             # Duration of disturbance (seconds)
+  interval: 5.0             # Average time between disturbances (seconds)
+  probability: 0.01         # Probability of disturbance per inner step
+
+# PID Constraints
+pid:
+  k_max: 10.0               # Maximum gain value
+  integral_max: 100.0       # Anti-windup limit
+
+# Observation Space Normalization
+observation:
+  error_scale: 2.0
+  error_dot_scale: 5.0
+  integral_scale: 10.0
+  position_scale: 3.0
+  velocity_scale: 5.0
+  reference_scale: 2.0
+  gain_scale: 10.0
+
+# Reward Function Weights
+reward:
+  lambda_error: 5.0         # Tracking error weight
+  lambda_velocity: 0.5      # Velocity error weight
+  lambda_control: 0.01      # Control effort weight
+  lambda_overshoot: 0.2     # Overshoot penalty weight
+
+# Episode Configuration
+episode:
+  max_steps: 1000           # Maximum RL steps per episode (50 seconds at 20 Hz)
+  termination_threshold: 10.0  # Terminate if position exceeds this value
+
+# PPO Training Configuration
+training:
+  total_timesteps: 5000000
+  learning_rate: 0.0003
+  n_steps: 2048
+  batch_size: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  n_epochs: 10
+
+# Logging
+logging:
+  tensorboard_log: "./ppo_pid_logs/"
+  save_path: "./models/"
+  checkpoint_freq: 100000
