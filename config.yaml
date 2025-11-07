@@ -1,9 +1,13 @@
 # DPPO PID Controller Configuration
+# Based on Research Plan Phase 1: Single-Axis Environment Setup
 
-# Plant Dynamics
+# Plant Dynamics (Second-Order System - Angular Rate Control)
 plant:
-  J: 1.0                    # Inertia
+  J: 1.0                    # Inertia (moment of inertia)
   B: 0.5                    # Damping coefficient
+  u_min: -10.0              # Minimum control input (actuator limit)
+  u_max: 10.0               # Maximum control input (actuator limit)
+  integration_method: "rk4" # Integration method: "euler" or "rk4" (RK4 recommended)
 
 # Time Step Configuration
 timing:
@@ -17,18 +21,28 @@ reference:
   r_max: 2.0                # Maximum setpoint
   change_interval: 2.0      # Seconds between setpoint changes
 
-# Disturbance
+# Disturbance (Intermittent Pulse Disturbance)
 disturbance:
   enabled: true
-  magnitude: 0.2            # Max disturbance force
+  magnitude: 0.5            # Max disturbance force: ±0.5
   duration: 0.1             # Duration of disturbance (seconds)
   interval: 5.0             # Average time between disturbances (seconds)
   probability: 0.01         # Probability of disturbance per inner step
 
-# PID Constraints
+# PID Constraints (Phase 1 Specifications)
 pid:
-  k_max: 10.0               # Maximum gain value
-  integral_max: 100.0       # Anti-windup limit
+  # Initial values (manual baseline)
+  kp_init: 5.0              # Initial proportional gain
+  ki_init: 0.1              # Initial integral gain
+  kd_init: 0.2              # Initial derivative gain
+
+  # Maximum bounds (action clipping)
+  kp_max: 10.0              # Maximum proportional gain
+  ki_max: 5.0               # Maximum integral gain
+  kd_max: 5.0               # Maximum derivative gain
+
+  # Anti-windup
+  integral_max: 100.0       # Anti-windup limit for integral term
 
 # Observation Space Normalization
 observation:
@@ -50,7 +64,7 @@ reward:
 # Episode Configuration
 episode:
   max_steps: 1000           # Maximum RL steps per episode (50 seconds at 20 Hz)
-  termination_threshold: 10.0  # Terminate if position exceeds this value
+  termination_threshold: 5.0  # Terminate if |x| or |ẋ| exceeds this value (stability check)
 
 # PPO Training Configuration
 training:
