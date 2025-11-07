@@ -1,15 +1,61 @@
-# DPPO for Real-Time PID Parameter Tuning
+# DPPO for Real-Time Adaptive PID Tuning
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Research](https://img.shields.io/badge/research-DPPO-red.svg)](RESEARCH_PLAN.md)
 
 ## Project Goal
 
-To use a Deep Reinforcement Learning (DRL) agent, specifically based on **Proximal Policy Optimization (PPO)**, to learn an optimal policy for adjusting the three PID gains (K_p, K_i, K_d) in real-time, such that a simulated system (the "Plant") accurately and robustly tracks a target trajectory or setpoint.
+To implement a Deep Reinforcement Learning (DRL) agent using **Diffusion Policy Policy Optimization (DPPO)** as a Meta-Controller to learn optimal strategies for real-time adjustment of PID gains (K_p, K_i, K_d) for multi-axis control systems, specifically targeting inner-loop attitude rate control of a simulated quadrotor.
 
-The core idea is to train a **Meta-Controller** (The DPPO Agent) that manipulates the classical **Inner-Controller** (The PID Loop).
+The project achieves **adaptive control** that is:
+- **Robust** to disturbances and parameter variations
+- **High-performance** in tracking diverse trajectories
+- **Adaptive** compared to fixed controllers
 
-## Quick Start
+## Research Focus
+
+**Primary Focus**: Phase 3 - DPPO Policy Model Implementation (see [RESEARCH_PLAN.md](RESEARCH_PLAN.md))
+
+This project represents a novel combination of:
+- Diffusion Models for action generation
+- PPO objectives for policy optimization
+- Real-time PID parameter tuning
+
+## Development Phases
+
+```
+Phase 1: Single-Axis Foundation ✓ IMPLEMENTED
+   ├─ 2nd-order system dynamics
+   ├─ RK4 integration
+   ├─ PID inner loop (200 Hz)
+   └─ PPO meta-controller (20 Hz)
+
+Phase 2: DPPO MDP Definition ✓ COMPLETE
+   ├─ 9D observation space
+   ├─ 3D action space
+   └─ Multi-objective reward function
+
+Phase 3: DPPO Implementation 🚧 IN PROGRESS (CORE RESEARCH)
+   ├─ Diffusion model policy
+   ├─ PPO-weighted training
+   └─ Fast inference (<50ms)
+
+Phase 4: 6-DOF Quadrotor 📋 PLANNED
+   ├─ Full nonlinear dynamics
+   ├─ Cascaded control (position → attitude → rate)
+   ├─ 27+ dimensional state space
+   └─ 9D action space (3 axes × 3 gains)
+
+Phase 5: Evaluation & Deployment 📋 PLANNED
+   ├─ Baseline comparisons (Manual PID, LQR, Fixed RL-PID)
+   ├─ Performance metrics (RMSE, settling time, robustness)
+   └─ Real-time deployment considerations
+```
+
+📖 **See [RESEARCH_PLAN.md](RESEARCH_PLAN.md) for complete specifications**
+
+## Quick Start (Phase 1 - Current)
 
 ```bash
 # Install dependencies
@@ -18,12 +64,16 @@ pip install -r requirements.txt
 # Run demo to test environment
 python demo.py
 
-# Train the agent
+# Train PPO agent (Phase 1 baseline before DPPO)
 python train.py
 
 # Evaluate trained model
 python evaluate.py --model models/dppo_pid_final_*.zip
+
+# Test DPPO model structure (Phase 3)
+python dppo_model.py
 ```
+
 ## Table of Contents
 
 - [Project Structure](#project-structure)
@@ -40,15 +90,29 @@ python evaluate.py --model models/dppo_pid_final_*.zip
 
 ```
 DPPO_PID_controller/
-├── dppo_pid_env.py          # Custom Gymnasium environment
-├── train.py                 # Training script with PPO
-├── evaluate.py              # Evaluation and visualization
-├── demo.py                  # Demo script for testing
-├── config.yaml              # Hyperparameter configuration
-├── PPO_HYPERPARAMETERS.md   # Detailed hyperparameter guide (中英文)
-├── requirements.txt         # Python dependencies
-├── .gitignore               # Git ignore file
-└── README.md                # This file
+├── Phase 1 & 2: Single-Axis with PPO
+│   ├── dppo_pid_env.py          # Gymnasium environment (Phase 1)
+│   ├── train.py                 # PPO training script
+│   ├── evaluate.py              # Evaluation and visualization
+│   ├── demo.py                  # Demo/testing script
+│   └── config.yaml              # Phase 1 configuration
+│
+├── Phase 3: DPPO Implementation (CORE)
+│   ├── dppo_model.py            # DPPO model (🚧 skeleton)
+│   └── train_dppo.py            # DPPO training (TODO)
+│
+├── Phase 4: 6-DOF Quadrotor
+│   ├── quadrotor_6dof_env.py    # 6-DOF environment (📋 placeholder)
+│   └── config_6dof.yaml         # Phase 4 configuration (TODO)
+│
+├── Documentation
+│   ├── README.md                # This file
+│   ├── RESEARCH_PLAN.md         # Complete research plan
+│   └── PPO_HYPERPARAMETERS.md   # Hyperparameter guide (中英文)
+│
+└── Configuration
+    ├── requirements.txt         # Python dependencies
+    └── .gitignore               # Git ignore patterns
 ```
 
 ## Technology Stack

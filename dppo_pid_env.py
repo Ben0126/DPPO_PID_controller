@@ -39,9 +39,10 @@ class DPPOPIDEnv(gym.Env):
         self._load_config()
 
         # Define action space: [K_p, K_i, K_d]
+        # Each gain has its own maximum bound (Phase 1 specifications)
         self.action_space = spaces.Box(
-            low=0.0,
-            high=self.k_max,
+            low=np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([self.kp_max, self.ki_max, self.kd_max], dtype=np.float32),
             shape=(3,),
             dtype=np.float32
         )
@@ -80,6 +81,9 @@ class DPPOPIDEnv(gym.Env):
         # Plant parameters
         self.J = self.config['plant']['J']
         self.B = self.config['plant']['B']
+        self.u_min = self.config['plant'].get('u_min', -10.0)
+        self.u_max = self.config['plant'].get('u_max', 10.0)
+        self.integration_method = self.config['plant'].get('integration_method', 'rk4')
 
         # Timing parameters
         self.dt_inner = self.config['timing']['dt_inner']
@@ -97,8 +101,13 @@ class DPPOPIDEnv(gym.Env):
         self.disturbance_duration = self.config['disturbance']['duration']
         self.disturbance_probability = self.config['disturbance']['probability']
 
-        # PID constraints
-        self.k_max = self.config['pid']['k_max']
+        # PID constraints (Phase 1 specifications)
+        self.kp_init = self.config['pid'].get('kp_init', 5.0)
+        self.ki_init = self.config['pid'].get('ki_init', 0.1)
+        self.kd_init = self.config['pid'].get('kd_init', 0.2)
+        self.kp_max = self.config['pid'].get('kp_max', 10.0)
+        self.ki_max = self.config['pid'].get('ki_max', 5.0)
+        self.kd_max = self.config['pid'].get('kd_max', 5.0)
         self.integral_max = self.config['pid']['integral_max']
 
         # Observation normalization scales
@@ -128,10 +137,10 @@ class DPPOPIDEnv(gym.Env):
         self.x = 0.0          # Position
         self.x_dot = 0.0      # Velocity
 
-        # PID state
-        self.Kp = 1.0
-        self.Ki = 0.1
-        self.Kd = 0.1
+        # PID state (Phase 1 initial values - manual baseline)
+        self.Kp = self.kp_init  # 5.0
+        self.Ki = self.ki_init  # 0.1
+        self.Kd = self.kd_init  # 0.2
         self.integral = 0.0
         self.last_error = 0.0
 
@@ -198,7 +207,10 @@ class DPPOPIDEnv(gym.Env):
             info: Additional information dictionary
         """
         # 1. Update PID Gains (Outer Loop @ 20 Hz)
-        self.Kp, self.Ki, self.Kd = np.clip(action, 0.0, self.k_max)
+        # Clip each gain to its specific maximum bound (Phase 1 specifications)
+        self.Kp = np.clip(action[0], 0.0, self.kp_max)
+        self.Ki = np.clip(action[1], 0.0, self.ki_max)
+        self.Kd = np.clip(action[2], 0.0, self.kd_max)
 
         total_reward = 0.0
 
@@ -213,8 +225,8 @@ class DPPOPIDEnv(gym.Env):
                  self.Ki * self.integral +
                  self.Kd * (error - self.last_error) / self.dt_inner)
 
-            # Optional: Saturate control input
-            u = np.clip(u, -50.0, 50.0)
+            # Saturate control input (actuator limits: Phase 1 specifications)
+            u = np.clip(u, self.u_min, self.u_max)  # u ∈ [-10, 10]
 
             # 2c. Apply Disturbance
             disturbance = self._get_disturbance()
@@ -297,7 +309,7 @@ class DPPOPIDEnv(gym.Env):
 
     def _integrate_plant(self, u: float):
         """
-        Integrate plant dynamics using Euler method.
+        Integrate plant dynamics using Euler or RK4 method.
 
         Plant equation: J * x_ddot + B * x_dot = u(t) + d(t)
         Rewritten: x_ddot = (u - B * x_dot) / J
@@ -305,12 +317,38 @@ class DPPOPIDEnv(gym.Env):
         Args:
             u: Total input (control + disturbance)
         """
-        # Calculate acceleration
-        x_ddot = (u - self.B * self.x_dot) / self.J
+        if self.integration_method == 'rk4':
+            # RK4 (Runge-Kutta 4th Order) Integration - RECOMMENDED (Phase 1)
+            # More accurate and numerically stable for nonlinear dynamics
 
-        # Euler integration
-        self.x_dot += x_ddot * self.dt_inner
-        self.x += self.x_dot * self.dt_inner
+            # State derivatives function: dx/dt = f(x, t)
+            def f(x_pos, x_vel, u_in):
+                """
+                State derivatives for 2nd-order system.
+                Returns: [dx_dot, dx_ddot]
+                """
+                x_ddot = (u_in - self.B * x_vel) / self.J
+                return x_vel, x_ddot
+
+            # Current state
+            x0 = self.x
+            v0 = self.x_dot
+            dt = self.dt_inner
+
+            # RK4 steps
+            k1_v, k1_a = f(x0, v0, u)
+            k2_v, k2_a = f(x0 + 0.5*dt*k1_v, v0 + 0.5*dt*k1_a, u)
+            k3_v, k3_a = f(x0 + 0.5*dt*k2_v, v0 + 0.5*dt*k2_a, u)
+            k4_v, k4_a = f(x0 + dt*k3_v, v0 + dt*k3_a, u)
+
+            # Update state
+            self.x += (dt / 6.0) * (k1_v + 2*k2_v + 2*k3_v + k4_v)
+            self.x_dot += (dt / 6.0) * (k1_a + 2*k2_a + 2*k3_a + k4_a)
+        else:
+            # Euler integration (simpler but less accurate)
+            x_ddot = (u - self.B * self.x_dot) / self.J
+            self.x_dot += x_ddot * self.dt_inner
+            self.x += self.x_dot * self.dt_inner
 
     def _get_disturbance(self) -> float:
         """
@@ -369,10 +407,12 @@ class DPPOPIDEnv(gym.Env):
         # 3. Control effort penalty
         control_penalty = -self.lambda_control * u**2
 
-        # 4. Overshoot penalty (error and velocity in opposite directions)
-        # If error > 0 (below setpoint) and x_dot < 0 (moving down): bad
-        # If error < 0 (above setpoint) and x_dot > 0 (moving up): bad
-        overshoot_indicator = max(0, -error * self.x_dot)
+        # 4. Overshoot penalty (Phase 1 specification: max(0, e·ė))
+        # Penalizes movement away from setpoint after crossing it
+        # Since ė = -ẋ (for constant reference), e·ė = -e·ẋ
+        # When e > 0 (below target) and ẋ < 0 (moving away): penalty
+        # When e < 0 (above target) and ẋ > 0 (moving away): penalty
+        overshoot_indicator = max(0, error * error_dot)  # = max(0, -error * x_dot)
         overshoot_penalty = -self.lambda_overshoot * overshoot_indicator
 
         # Total reward
