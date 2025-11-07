@@ -63,10 +63,18 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
     print("=" * 60)
     print("DPPO PID Controller - Training Script")
     print("=" * 60)
-    print(f"Configuration loaded from: {config_path}")
-    print(f"Total training steps: {config['training']['total_timesteps']:,}")
-    print(f"Learning rate: {config['training']['learning_rate']}")
-    print(f"Batch size: {config['training']['batch_size']}")
+    print(f"Configuration: {config_path}")
+    print()
+    print("PPO Hyperparameters (Recommended Settings):")
+    print(f"  Policy Network:    {config['training'].get('policy_net_arch', [128, 128])}")
+    print(f"  Value Network:     {config['training'].get('value_net_arch', [128, 128])}")
+    print(f"  Learning Rate:     {config['training']['learning_rate']} (3×10⁻⁴)")
+    print(f"  n_steps:           {config['training']['n_steps']}")
+    print(f"  Batch Size:        {config['training']['batch_size']}")
+    print(f"  Gamma (γ):         {config['training']['gamma']}")
+    print(f"  GAE Lambda (λ):    {config['training']['gae_lambda']}")
+    print(f"  Total Steps:       {config['training']['total_timesteps']:,}")
+    print(f"  VecNormalize:      {'Enabled' if config['training'].get('use_vec_normalize', True) else 'Disabled'}")
     print("=" * 60)
 
     # Create training environment (vectorized for SB3 compatibility)
@@ -109,6 +117,14 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
             print(f"Loaded normalization statistics from: {stats_path}")
     else:
         print("[3/5] Creating new PPO model...")
+
+        # Get network architecture from config
+        policy_net = config['training'].get('policy_net_arch', [128, 128])
+        value_net = config['training'].get('value_net_arch', [128, 128])
+
+        print(f"Policy network architecture: {policy_net}")
+        print(f"Value network architecture: {value_net}")
+
         model = PPO(
             policy="MlpPolicy",
             env=train_env,
@@ -125,7 +141,7 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
             verbose=1,
             tensorboard_log=config['logging']['tensorboard_log'],
             policy_kwargs=dict(
-                net_arch=[dict(pi=[256, 256], vf=[256, 256])]  # Larger network for complex control
+                net_arch=[dict(pi=policy_net, vf=value_net)]
             )
         )
 

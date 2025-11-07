@@ -40,13 +40,15 @@ python evaluate.py --model models/dppo_pid_final_*.zip
 
 ```
 DPPO_PID_controller/
-├── dppo_pid_env.py      # Custom Gymnasium environment
-├── train.py             # Training script with PPO
-├── evaluate.py          # Evaluation and visualization
-├── demo.py              # Demo script for testing
-├── config.yaml          # Hyperparameter configuration
-├── requirements.txt     # Python dependencies
-└── README.md            # This file
+├── dppo_pid_env.py          # Custom Gymnasium environment
+├── train.py                 # Training script with PPO
+├── evaluate.py              # Evaluation and visualization
+├── demo.py                  # Demo script for testing
+├── config.yaml              # Hyperparameter configuration
+├── PPO_HYPERPARAMETERS.md   # Detailed hyperparameter guide (中英文)
+├── requirements.txt         # Python dependencies
+├── .gitignore               # Git ignore file
+└── README.md                # This file
 ```
 
 ## Technology Stack
@@ -235,6 +237,14 @@ training:
 ```
 
 See `config.yaml` for all available parameters.
+
+**📖 For detailed explanations of PPO hyperparameters, see [PPO_HYPERPARAMETERS.md](PPO_HYPERPARAMETERS.md)**
+
+The current configuration uses **recommended settings** for a 9-dimensional state space:
+- **Policy Network**: 2 layers × 128 units (suitable for 9D state)
+- **Learning Rate**: 3×10⁻⁴ (standard PPO starting value)
+- **Batch Size**: 64 (< n_steps for mini-batch training)
+- **VecNormalize**: Enabled (critical for training stability)
 
 ## Implementation Details
 

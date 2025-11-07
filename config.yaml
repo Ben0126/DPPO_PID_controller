@@ -54,17 +54,25 @@ episode:
 
 # PPO Training Configuration
 training:
+  # Policy Network Architecture
+  policy_net_arch: [128, 128]    # 2 layers, 128 units each (recommended: 64-128 for 9D state)
+  value_net_arch: [128, 128]     # Value network architecture
+
+  # PPO Hyperparameters (Recommended Settings)
   total_timesteps: 5000000
-  learning_rate: 0.0003
-  n_steps: 2048
-  batch_size: 64
-  gamma: 0.99
-  gae_lambda: 0.95
-  clip_range: 0.2
-  ent_coef: 0.0
-  vf_coef: 0.5
-  max_grad_norm: 0.5
-  n_epochs: 10
+  learning_rate: 0.0003          # 3 × 10⁻⁴ (standard starting value)
+  n_steps: 2048                  # Trajectory collection length
+  batch_size: 64                 # Mini-batch size (should be < n_steps)
+  gamma: 0.99                    # Discount factor (high for long-term planning)
+  gae_lambda: 0.95               # GAE lambda (balances bias/variance in advantage estimation)
+  clip_range: 0.2                # PPO clipping parameter
+  ent_coef: 0.0                  # Entropy coefficient (exploration)
+  vf_coef: 0.5                   # Value function coefficient
+  max_grad_norm: 0.5             # Gradient clipping
+  n_epochs: 10                   # Number of epochs per update
+
+  # Normalization (CRITICAL for stability)
+  use_vec_normalize: true        # Use VecNormalize wrapper for obs/reward normalization
 
 # Logging
 logging:
