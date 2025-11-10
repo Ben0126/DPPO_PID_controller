@@ -138,6 +138,12 @@ DPPO_PID_controller/
 git clone <repository-url>
 cd DPPO_PID_controller
 
+# Create a virtual environment
+python -m venv dppo  
+
+# Activate the virtual environment
+.\dppo\Scripts\activate 
+
 # Install dependencies
 pip install -r requirements.txt
 ```
