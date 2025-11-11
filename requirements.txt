@@ -3,8 +3,21 @@ stable-baselines3>=2.0.0
 gymnasium>=0.28.0
 
 # Deep Learning (for DPPO - Phase 3)
+# NOTE: PyTorch with CUDA support requires special installation
+# 
+# For CUDA 12.8 (recommended if you have CUDA 12.8):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+#
+# For CUDA 12.1/12.4 (alternative, more stable):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# For CPU only:
+#   pip install torch torchvision torchaudio
+#
+# The packages below are listed for reference, but should be installed using the commands above
 torch>=2.0.0
 torchvision>=0.15.0
+torchaudio>=2.0.0
 
 # Numerical Computing
 numpy>=1.24.0
