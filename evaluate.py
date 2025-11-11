@@ -36,7 +36,7 @@ def evaluate_model(
         save_plots: Whether to save visualization plots
     """
     # Load configuration
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
     print("=" * 60)

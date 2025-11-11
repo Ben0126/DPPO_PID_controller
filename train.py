@@ -54,7 +54,7 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
         model_path: Path to the model to resume from
     """
     # Load configuration
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = yaml.safe_load(f)
 
     # Create directories
@@ -177,11 +177,21 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
     print(f"  tensorboard --logdir {config['logging']['tensorboard_log']}")
     print("=" * 60)
 
+    # Check if progress bar dependencies are available
+    try:
+        import tqdm
+        import rich
+        use_progress_bar = True
+    except ImportError:
+        use_progress_bar = False
+        print("Warning: tqdm/rich not installed. Progress bar disabled.")
+        print("Install with: pip install tqdm rich")
+
     try:
         model.learn(
             total_timesteps=config['training']['total_timesteps'],
             callback=callbacks,
-            progress_bar=True
+            progress_bar=use_progress_bar
         )
 
         # Save final model
