@@ -48,10 +48,13 @@ def evaluate_model(
 
     # Create environment
     print("\n[1/3] Creating evaluation environment...")
-    env = make_env(config_path)
-
+    # Create a factory function that returns a new environment instance
+    # This ensures we can access the actual environment instance later
+    env_factory = lambda: make_env(config_path)
+    env = env_factory()  # Keep reference to actual env for history access
+    
     # Wrap in DummyVecEnv for compatibility
-    eval_env = DummyVecEnv([lambda: env])
+    eval_env = DummyVecEnv([env_factory])
 
     # Load normalization statistics if they exist
     stats_path = model_path.replace('.zip', '_vec_normalize.pkl')
@@ -80,6 +83,7 @@ def evaluate_model(
         episode_reward = 0
         episode_length = 0
         done = False
+        last_info = None
 
         while not done:
             # Get action from trained policy
@@ -89,6 +93,7 @@ def evaluate_model(
             obs, reward, done, info = eval_env.step(action)
             episode_reward += reward[0]
             episode_length += 1
+            last_info = info  # Save last info for fallback
 
             if done:
                 break
@@ -97,20 +102,52 @@ def evaluate_model(
         episode_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
 
-        # Get history from environment
-        history = env.get_history()
+        # Get history from environment (unwrap if needed)
+        # VecNormalize wraps DummyVecEnv, which wraps the actual env
+        actual_env = eval_env
+        while hasattr(actual_env, 'envs') or hasattr(actual_env, 'venv'):
+            if hasattr(actual_env, 'venv'):
+                actual_env = actual_env.venv
+            elif hasattr(actual_env, 'envs'):
+                # DummyVecEnv has envs attribute (list of environments)
+                actual_env = actual_env.envs[0]
+            else:
+                break
+        
+        # Get history from the actual environment
+        # If unwrapping failed, try to get from the stored env reference
+        if hasattr(actual_env, 'get_history'):
+            history = actual_env.get_history()
+        elif hasattr(env, 'get_history'):
+            history = env.get_history()
+        else:
+            history = {}
+        
         all_histories.append(history)
 
-        # Print episode summary
-        final_error = abs(history['error'][-1]) if history['error'] else float('nan')
-        mean_abs_error = np.mean(np.abs(history['error'])) if history['error'] else float('nan')
+        # Print episode summary with safe access to history
+        final_error = abs(history['error'][-1]) if history.get('error') and len(history['error']) > 0 else float('nan')
+        mean_abs_error = np.mean(np.abs(history['error'])) if history.get('error') and len(history['error']) > 0 else float('nan')
+        
+        # Safe access to final gains
+        if history.get('kp') and len(history['kp']) > 0:
+            final_kp = history['kp'][-1]
+            final_ki = history['ki'][-1] if history.get('ki') and len(history['ki']) > 0 else float('nan')
+            final_kd = history['kd'][-1] if history.get('kd') and len(history['kd']) > 0 else float('nan')
+            gains_str = f"Kp={final_kp:.3f}, Ki={final_ki:.3f}, Kd={final_kd:.3f}"
+        elif last_info and len(last_info) > 0 and isinstance(last_info[0], dict):
+            # Fallback to info dictionary if history is empty
+            info_dict = last_info[0]
+            gains_str = f"Kp={info_dict.get('Kp', 'N/A'):.3f}, Ki={info_dict.get('Ki', 'N/A'):.3f}, Kd={info_dict.get('Kd', 'N/A'):.3f}"
+        else:
+            gains_str = "N/A"
 
         print(f"Episode {episode + 1}/{n_episodes}:")
         print(f"  Reward: {episode_reward:.2f}")
         print(f"  Length: {episode_length} steps")
         print(f"  Final Error: {final_error:.4f}")
         print(f"  Mean Abs Error: {mean_abs_error:.4f}")
-        print(f"  Final Gains: Kp={history['kp'][-1]:.3f}, Ki={history['ki'][-1]:.3f}, Kd={history['kd'][-1]:.3f}")
+        print(f"  Final Gains: {gains_str}")
         print("-" * 60)
 
     # Print summary statistics
