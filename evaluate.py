@@ -48,13 +48,11 @@ def evaluate_model(
 
     # Create environment
     print("\n[1/3] Creating evaluation environment...")
-    # Create a factory function that returns a new environment instance
-    # This ensures we can access the actual environment instance later
-    env_factory = lambda: make_env(config_path)
-    env = env_factory()  # Keep reference to actual env for history access
+    # Create a single environment instance that we can access later
+    actual_env = make_env(config_path)
     
-    # Wrap in DummyVecEnv for compatibility
-    eval_env = DummyVecEnv([env_factory])
+    # Wrap in DummyVecEnv for compatibility (use the same instance)
+    eval_env = DummyVecEnv([lambda: actual_env])
 
     # Load normalization statistics if they exist
     stats_path = model_path.replace('.zip', '_vec_normalize.pkl')
@@ -104,24 +102,34 @@ def evaluate_model(
 
         # Get history from environment (unwrap if needed)
         # VecNormalize wraps DummyVecEnv, which wraps the actual env
-        actual_env = eval_env
-        while hasattr(actual_env, 'envs') or hasattr(actual_env, 'venv'):
-            if hasattr(actual_env, 'venv'):
-                actual_env = actual_env.venv
-            elif hasattr(actual_env, 'envs'):
+        unwrapped_env = eval_env
+        while hasattr(unwrapped_env, 'venv') or hasattr(unwrapped_env, 'envs'):
+            if hasattr(unwrapped_env, 'venv'):
+                unwrapped_env = unwrapped_env.venv
+            elif hasattr(unwrapped_env, 'envs'):
                 # DummyVecEnv has envs attribute (list of environments)
-                actual_env = actual_env.envs[0]
+                unwrapped_env = unwrapped_env.envs[0]
             else:
                 break
         
         # Get history from the actual environment
-        # If unwrapping failed, try to get from the stored env reference
-        if hasattr(actual_env, 'get_history'):
+        if hasattr(unwrapped_env, 'get_history'):
+            history = unwrapped_env.get_history()
+        elif hasattr(actual_env, 'get_history'):
             history = actual_env.get_history()
-        elif hasattr(env, 'get_history'):
-            history = env.get_history()
         else:
             history = {}
+        
+        # Debug: Check if history is empty
+        if not history or (history.get('time') and len(history['time']) == 0):
+            # Try to get from the wrapped environment directly
+            if hasattr(eval_env, 'venv') and hasattr(eval_env.venv, 'envs'):
+                try:
+                    direct_env = eval_env.venv.envs[0]
+                    if hasattr(direct_env, 'get_history'):
+                        history = direct_env.get_history()
+                except:
+                    pass
         
         all_histories.append(history)
 
@@ -187,7 +195,7 @@ def evaluate_model(
         # Plot summary statistics
         plot_summary(episode_rewards, episode_lengths, all_histories, output_dir)
 
-        print(f"✓ Visualizations saved to: {output_dir}")
+        print(f"[OK] Visualizations saved to: {output_dir}")
 
     # Cleanup
     eval_env.close()

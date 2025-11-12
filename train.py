@@ -10,6 +10,8 @@ import argparse
 import yaml
 import numpy as np
 from datetime import datetime
+import matplotlib.pyplot as plt
+import pandas as pd
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
