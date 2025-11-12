@@ -196,6 +196,7 @@ def evaluate_model(
         plot_summary(episode_rewards, episode_lengths, all_histories, output_dir)
 
         print(f"[OK] Visualizations saved to: {output_dir}")
+        print("\n所有評估圖表已顯示在視窗中。")
 
     # Cleanup
     eval_env.close()
@@ -268,9 +269,11 @@ def plot_episode(history, episode_idx, reward, output_dir, title_prefix="Episode
     filename = f"{title_prefix.lower()}_episode_{episode_idx + 1}.png"
     filepath = os.path.join(output_dir, filename)
     plt.savefig(filepath, dpi=150, bbox_inches='tight')
-    plt.close()
-
     print(f"  Saved: {filepath}")
+    
+    # 顯示圖表
+    plt.show()
+    plt.close()
 
 
 def plot_summary(episode_rewards, episode_lengths, all_histories, output_dir):
@@ -338,9 +341,11 @@ def plot_summary(episode_rewards, episode_lengths, all_histories, output_dir):
     # Save figure
     filepath = os.path.join(output_dir, 'evaluation_summary.png')
     plt.savefig(filepath, dpi=150, bbox_inches='tight')
-    plt.close()
-
     print(f"  Saved: {filepath}")
+    
+    # 顯示圖表
+    plt.show()
+    plt.close()
 
 
 def main():

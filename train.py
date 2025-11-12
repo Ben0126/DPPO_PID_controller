@@ -11,6 +11,7 @@ import yaml
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 import pandas as pd
 
 from stable_baselines3 import PPO
@@ -19,6 +20,136 @@ from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
 from dppo_pid_env import make_env
+
+
+def plot_training_results(log_dir: str):
+    """
+    讀取訓練日誌並繪製訓練過程的可視化圖表。
+    
+    Args:
+        log_dir: 訓練日誌目錄路徑
+    """
+    monitor_file = os.path.join(log_dir, 'monitor.csv')
+    
+    if not os.path.exists(monitor_file):
+        print(f"Warning: Monitor file not found at {monitor_file}")
+        return
+    
+    # 讀取 monitor.csv（跳過第一行 JSON 元數據）
+    try:
+        df = pd.read_csv(monitor_file, skiprows=1)
+    except Exception as e:
+        print(f"Error reading monitor.csv: {e}")
+        return
+    
+    if df.empty:
+        print("Warning: Monitor file is empty")
+        return
+    
+    # 計算累積步數
+    df['cumulative_steps'] = df['l'].cumsum()
+    
+    # 計算移動平均（用於平滑曲線）
+    window_size = min(50, len(df) // 10)  # 使用 10% 的數據作為窗口大小，最少 50 個點
+    if window_size < 1:
+        window_size = 1
+    
+    df['reward_smooth'] = df['r'].rolling(window=window_size, center=True).mean()
+    
+    # 創建圖表
+    fig = plt.figure(figsize=(16, 10))
+    gs = GridSpec(3, 2, figure=fig, hspace=0.3, wspace=0.3)
+    
+    # 圖表 1: 獎勵 vs 累積步數（原始數據 + 平滑曲線）
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.scatter(df['cumulative_steps'], df['r'], alpha=0.3, s=10, color='lightblue', label='原始數據')
+    ax1.plot(df['cumulative_steps'], df['reward_smooth'], 'r-', linewidth=2, label=f'移動平均 (窗口={window_size})')
+    ax1.set_xlabel('累積步數 (Cumulative Steps)', fontsize=12)
+    ax1.set_ylabel('Episode 獎勵 (Reward)', fontsize=12)
+    ax1.set_title('訓練過程：獎勵 vs 步數', fontsize=14, fontweight='bold')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # 圖表 2: Episode 獎勵分佈
+    ax2 = fig.add_subplot(gs[1, 0])
+    ax2.hist(df['r'], bins=50, color='steelblue', alpha=0.7, edgecolor='black')
+    ax2.axvline(df['r'].mean(), color='r', linestyle='--', linewidth=2, 
+                label=f'平均值: {df["r"].mean():.2f}')
+    ax2.axvline(df['r'].median(), color='g', linestyle='--', linewidth=2, 
+                label=f'中位數: {df["r"].median():.2f}')
+    ax2.set_xlabel('Episode 獎勵', fontsize=12)
+    ax2.set_ylabel('頻率', fontsize=12)
+    ax2.set_title('Episode 獎勵分佈', fontsize=14, fontweight='bold')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3, axis='y')
+    
+    # 圖表 3: Episode 長度分佈
+    ax3 = fig.add_subplot(gs[1, 1])
+    ax3.hist(df['l'], bins=50, color='coral', alpha=0.7, edgecolor='black')
+    ax3.axvline(df['l'].mean(), color='r', linestyle='--', linewidth=2, 
+                label=f'平均值: {df["l"].mean():.1f}')
+    ax3.axvline(df['l'].median(), color='g', linestyle='--', linewidth=2, 
+                label=f'中位數: {df["l"].median():.1f}')
+    ax3.set_xlabel('Episode 長度 (步數)', fontsize=12)
+    ax3.set_ylabel('頻率', fontsize=12)
+    ax3.set_title('Episode 長度分佈', fontsize=14, fontweight='bold')
+    ax3.legend()
+    ax3.grid(True, alpha=0.3, axis='y')
+    
+    # 圖表 4: 獎勵趨勢（按 episode 順序）
+    ax4 = fig.add_subplot(gs[2, 0])
+    episode_nums = range(1, len(df) + 1)
+    ax4.plot(episode_nums, df['r'], 'b-', alpha=0.5, linewidth=1, label='原始數據')
+    ax4.plot(episode_nums, df['reward_smooth'], 'r-', linewidth=2, label='移動平均')
+    ax4.set_xlabel('Episode 編號', fontsize=12)
+    ax4.set_ylabel('Episode 獎勵', fontsize=12)
+    ax4.set_title('獎勵趨勢（按 Episode）', fontsize=14, fontweight='bold')
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
+    
+    # 圖表 5: 統計摘要
+    ax5 = fig.add_subplot(gs[2, 1])
+    ax5.axis('off')
+    
+    # 計算統計數據
+    total_episodes = len(df)
+    total_steps = df['cumulative_steps'].iloc[-1]
+    mean_reward = df['r'].mean()
+    std_reward = df['r'].std()
+    min_reward = df['r'].min()
+    max_reward = df['r'].max()
+    mean_length = df['l'].mean()
+    std_length = df['l'].std()
+    
+    # 計算最近 100 個 episodes 的平均獎勵（如果有的話）
+    recent_episodes = min(100, total_episodes)
+    recent_mean_reward = df['r'].tail(recent_episodes).mean()
+    
+    stats_text = f"""
+    訓練統計摘要
+    
+    總 Episode 數: {total_episodes:,}
+    總步數: {total_steps:,}
+    
+    獎勵統計:
+    平均值: {mean_reward:.2f} ± {std_reward:.2f}
+    最小值: {min_reward:.2f}
+    最大值: {max_reward:.2f}
+    最近 {recent_episodes} 個 Episodes 平均: {recent_mean_reward:.2f}
+    
+    Episode 長度統計:
+    平均值: {mean_length:.1f} ± {std_length:.1f}
+    最小值: {df['l'].min():.0f}
+    最大值: {df['l'].max():.0f}
+    """
+    
+    ax5.text(0.1, 0.5, stats_text, fontsize=11, family='monospace',
+             verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.suptitle('DPPO PID Controller - 訓練過程可視化', fontsize=16, fontweight='bold', y=0.995)
+    
+    # 顯示圖表
+    plt.show()
 
 
 def create_directories(config):
@@ -228,6 +359,17 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
         # Cleanup
         train_env.close()
         eval_env.close()
+
+    # Visualize training results
+    print("\n" + "=" * 60)
+    print("Generating training visualizations...")
+    print("=" * 60)
+    try:
+        plot_training_results('./train_logs/')
+        print("✓ Training visualizations displayed successfully!")
+    except Exception as e:
+        print(f"⚠ Warning: Could not generate training visualizations: {e}")
+        print("  Training data may not be available yet.")
 
     print("=" * 60)
     print("Training session ended.")
