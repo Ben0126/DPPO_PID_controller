@@ -95,7 +95,7 @@ training:
   value_net_arch: [128, 128]     # Value network architecture
 
   # PPO Hyperparameters (Recommended Settings)
-  total_timesteps: 100000 #  5000000
+  total_timesteps: 5000000 #  100000
   learning_rate: 0.0003          # 3 × 10⁻⁴ (standard starting value)
   n_steps: 2048                  # Trajectory collection length
   batch_size: 64                 # Mini-batch size (should be < n_steps)

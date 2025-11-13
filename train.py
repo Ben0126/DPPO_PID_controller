@@ -23,12 +23,14 @@ from dppo_pid_env import make_env
 from utils import TrainingMetricsTracker, plot_airpilot_style_metrics
 
 
-def plot_training_results(log_dir: str):
+def plot_training_results(log_dir: str, save_path: str = None, show_plot: bool = False):
     """
     Read training logs and plot training process visualizations.
     
     Args:
         log_dir: Training log directory path
+        save_path: Path to save the plot (if None, saves to log_dir/training_visualization.png)
+        show_plot: Whether to display the plot interactively (default: False)
     """
     monitor_file = os.path.join(log_dir, 'monitor.csv')
     
@@ -149,8 +151,18 @@ def plot_training_results(log_dir: str):
     
     plt.suptitle('DPPO PID Controller - Training Process Visualization', fontsize=16, fontweight='bold', y=0.995)
     
-    # Display plot
-    plt.show()
+    # Save plot
+    if save_path is None:
+        save_path = os.path.join(log_dir, 'training_visualization.png')
+    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f"✓ Training visualization saved to: {save_path}")
+    
+    # Optionally display plot
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
 
 
 def create_directories(config):
