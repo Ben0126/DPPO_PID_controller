@@ -144,6 +144,18 @@ DPPO_PID_controller/
 │   ├── demo.py                  # Demo/testing script / 演示/測試腳本
 │   └── config.yaml              # Phase 1 configuration / 第一階段配置
 │
+├── Controllers / 控制器模組
+│   ├── controllers/
+│   │   ├── __init__.py          # 模組初始化
+│   │   ├── linear_pid.py        # 標準線性 PID 控制器
+│   │   └── nonlinear_pid.py     # 非線性 PID 控制器（實驗性）
+│
+├── Utils / 工具模組
+│   ├── utils/
+│   │   ├── __init__.py          # 模組初始化
+│   │   ├── training_metrics.py  # 訓練指標追蹤（AirPilot 風格）
+│   │   └── visualization.py    # 可視化工具（統一管理）
+│
 ├── Phase 3: DPPO Implementation (CORE)
 │   第三階段：DPPO 實現（核心）
 │   ├── dppo_model.py            # DPPO model (🚧 skeleton)
@@ -161,6 +173,9 @@ DPPO_PID_controller/
 ├── Documentation / 文檔
 │   ├── README.md                # This file / 本文件
 │   ├── RESEARCH_PLAN.md         # Complete research plan / 完整研究計劃
+│   ├── PROGRAM_ARCHITECTURE.md  # Program architecture details / 程式架構詳解
+│   ├── AIRPILOT_COMPARISON_ANALYSIS.md  # AirPilot comparison / AirPilot 比較分析
+│   ├── AIRPILOT_ARCHITECTURE_DETAILS.md # AirPilot architecture / AirPilot 架構詳解
 │   └── PPO_HYPERPARAMETERS.md   # Hyperparameter guide (中英文)
 │                                # 超參數指南（中英文）
 │
@@ -330,6 +345,13 @@ Start training with default configuration:
 python train.py
 ```
 
+**Quick test mode (AirPilot style) / 快速測試模式（AirPilot 風格）：**
+
+```bash
+# 在 config.yaml 中設置 quick_test_mode: true
+python train.py
+```
+
 **With custom configuration / 使用自定義配置：**
 
 ```bash
@@ -348,6 +370,12 @@ python train.py --resume --model models/dppo_pid_checkpoint_1000000_steps.zip
 tensorboard --logdir ./ppo_pid_logs/
 ```
 
+**Training metrics (AirPilot style) / 訓練指標（AirPilot 風格）：**
+
+訓練完成後，系統會自動生成：
+- `training_metrics/training_metrics.json` - 訓練指標數據
+- `training_metrics/airpilot_style_metrics.png` - AirPilot 風格可視化圖表
+
 ### 3. Evaluate Trained Model / 評估訓練模型
 
 **English:**
@@ -363,6 +391,7 @@ python evaluate.py --model models/dppo_pid_final_TIMESTAMP.zip --episodes 10
 **This generates / 這將生成：**
 - Performance plots for best/worst episodes / 最佳/最差回合的性能圖表
 - Summary statistics across all episodes / 所有回合的統計摘要
+- **Gains vs Error plots (AirPilot style) / 增益 vs 誤差圖表（AirPilot 風格）**
 - Saved in `./evaluation_results/` / 保存在 `./evaluation_results/`
 
 ---
@@ -405,6 +434,19 @@ training:
   n_steps: 2048             # Trajectory length / 軌跡長度
   batch_size: 64            # Mini-batch size / 小批量大小
   gamma: 0.99               # Discount factor / 折扣因子
+  
+  # Quick Test Mode (AirPilot style) / 快速測試模式（AirPilot 風格）
+  quick_test_mode: false         # Enable quick mode / 啟用快速模式
+  quick_test_timesteps: 20000    # Quick mode steps / 快速模式步數
+  quick_test_net_arch: [64, 64]   # Quick mode network / 快速模式網路
+```
+
+### PID Controller Configuration / PID 控制器配置
+
+```yaml
+pid:
+  controller_type: "linear"  # "linear" or "nonlinear" / "線性" 或 "非線性"
+  nonlinear_max_velocity: 1.0  # For nonlinear PID / 非線性 PID 用
 ```
 
 **See `config.yaml` for all available parameters.**

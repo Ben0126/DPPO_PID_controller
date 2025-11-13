@@ -6,8 +6,8 @@ to verify the implementation before training.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 from dppo_pid_env import make_env
+from utils import plot_demo_results
 
 
 def run_demo_episode(config_path: str = "config.yaml", n_steps: int = 200):
@@ -76,61 +76,6 @@ def run_demo_episode(config_path: str = "config.yaml", n_steps: int = 200):
     plot_demo_results(history)
 
     env.close()
-
-
-def plot_demo_results(history):
-    """
-    Plot the results from the demo episode.
-
-    Args:
-        history: Dictionary containing episode history
-    """
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
-
-    time = np.array(history['time'])
-    position = np.array(history['position'])
-    reference = np.array(history['reference'])
-    error = np.array(history['error'])
-    control = np.array(history['control'])
-    kp = np.array(history['kp'])
-    ki = np.array(history['ki'])
-    kd = np.array(history['kd'])
-
-    # Plot 1: Position Tracking
-    axes[0].plot(time, position, 'b-', label='Position', linewidth=2)
-    axes[0].plot(time, reference, 'r--', label='Reference', linewidth=2)
-    axes[0].set_ylabel('Position', fontsize=12)
-    axes[0].set_title('Demo Episode - Random PID Gains', fontsize=14, fontweight='bold')
-    axes[0].legend(loc='upper right')
-    axes[0].grid(True, alpha=0.3)
-
-    # Plot 2: Tracking Error and Control
-    ax2_twin = axes[1].twinx()
-    axes[1].plot(time, error, 'g-', label='Error', linewidth=2)
-    ax2_twin.plot(time, control, 'purple', label='Control', linewidth=2, alpha=0.7)
-    axes[1].set_ylabel('Tracking Error', fontsize=12, color='g')
-    ax2_twin.set_ylabel('Control Input (u)', fontsize=12, color='purple')
-    axes[1].tick_params(axis='y', labelcolor='g')
-    ax2_twin.tick_params(axis='y', labelcolor='purple')
-    axes[1].axhline(y=0, color='k', linestyle='--', alpha=0.3)
-    axes[1].grid(True, alpha=0.3)
-
-    # Plot 3: PID Gains
-    axes[2].plot(time, kp, 'r-', label='Kp', linewidth=2)
-    axes[2].plot(time, ki, 'g-', label='Ki', linewidth=2)
-    axes[2].plot(time, kd, 'b-', label='Kd', linewidth=2)
-    axes[2].set_ylabel('PID Gains', fontsize=12)
-    axes[2].set_xlabel('Time (s)', fontsize=12)
-    axes[2].legend(loc='upper right')
-    axes[2].grid(True, alpha=0.3)
-
-    plt.tight_layout()
-
-    # Save figure
-    plt.savefig('demo_results.png', dpi=150, bbox_inches='tight')
-    print("\n✓ Demo plot saved to: demo_results.png")
-
-    plt.show()
 
 
 def test_environment_api():

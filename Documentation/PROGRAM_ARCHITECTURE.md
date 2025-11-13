@@ -23,17 +23,31 @@
 │  (環境測試)   │  (模型訓練)   │      (模型評估)          │
 └──────┬───────┴──────┬───────┴──────────┬───────────────┘
        │              │                  │
-       └──────────────┼──────────────────┘
-                      │
-       ┌──────────────▼──────────────┐
-       │    dppo_pid_env.py          │
-       │  (自定義 Gymnasium 環境)     │
-       └──────────────┬──────────────┘
-                      │
-       ┌──────────────▼──────────────┐
-       │    dppo_model.py            │
-       │  (DPPO 模型 - 骨架實現)      │
-       └────────────────────────────┘
+       │              │                  │
+       ▼              ▼                  ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│   utils/     │ │   utils/     │ │   utils/     │
+│visualization │ │training_     │ │visualization │
+│              │ │metrics       │ │              │
+└──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+       │                │                 │
+       └────────────────┼─────────────────┘
+                        │
+       ┌────────────────▼────────────────┐
+       │    dppo_pid_env.py              │
+       │  (自定義 Gymnasium 環境)         │
+       └────────────────┬────────────────┘
+                        │
+       ┌────────────────▼────────────────┐
+       │    controllers/                 │
+       │  - linear_pid.py                │
+       │  - nonlinear_pid.py (實驗性)    │
+       └────────────────┬────────────────┘
+                        │
+       ┌────────────────▼────────────────┐
+       │    dppo_model.py                │
+       │  (DPPO 模型 - 骨架實現)          │
+       └────────────────────────────────┘
 ```
 
 ---
@@ -148,7 +162,10 @@ PPO(
 #### 2.3 回調設置
 ```python
 1. CheckpointCallback：定期保存模型檢查點
-2. EvalCallback：定期評估並保存最佳模型
+2. MetricsEvalCallback：自定義評估回調（集成訓練指標追蹤）
+   - 繼承自 EvalCallback
+   - 自動記錄訓練指標（Effective Speed, Settling Time, Overshoot）
+   - 使用 TrainingMetricsTracker 追蹤
 ```
 
 #### 2.4 訓練循環
@@ -210,6 +227,12 @@ for episode in range(n_episodes):
    - 回合長度分佈
    - 平均絕對誤差分佈
    - 最終 PID 增益分佈
+
+4. Gains vs Error 圖表（AirPilot 風格）
+   - Kp vs Position Error
+   - Ki vs Position Error
+   - Kd vs Position Error
+   - 參考 AirPilot Fig.17
 ```
 
 ---
@@ -235,7 +258,7 @@ run_demo_episode():
     - 創建環境
     - 執行 n_steps 步隨機動作
     - 每 50 步打印狀態資訊
-    - 繪製結果圖表
+    - 使用 utils.visualization.plot_demo_results() 繪製結果圖表
 ```
 
 **用途**：
@@ -245,13 +268,79 @@ run_demo_episode():
 
 ---
 
-### 5. `dppo_model.py` - DPPO 模型（骨架實現）
+### 5. `utils/` - 工具模組
+
+**角色**：提供訓練指標追蹤和可視化功能
+
+#### 5.1 `utils/training_metrics.py`
+
+**TrainingMetricsTracker 類別**：
+- 追蹤訓練過程中的關鍵指標（參考 AirPilot Fig.14-16）
+- 計算 Effective Speed、Settling Time、Overshoot、Mean Error
+- 支持保存/載入 JSON 格式
+
+**主要方法**：
+```python
+log_episode(timestep, episode_history)  # 記錄一個回合的指標
+save(filename)                          # 保存到 JSON
+load(filename)                          # 從 JSON 載入
+```
+
+#### 5.2 `utils/visualization.py`
+
+**統一可視化函數**：
+- `plot_airpilot_style_metrics()` - AirPilot 風格訓練指標圖表
+- `plot_episode()` - 單個回合詳細圖表
+- `plot_summary()` - 統計摘要圖表
+- `plot_gains_vs_error()` - PID 增益 vs 誤差圖表（AirPilot Fig.17）
+- `plot_demo_results()` - 演示結果圖表
+
+**設計優勢**：
+- 所有可視化函數集中管理
+- 避免代碼重複
+- 統一的圖表風格
+
+---
+
+### 6. `controllers/` - 控制器模組
+
+**角色**：提供模組化的 PID 控制器實現
+
+#### 6.1 `controllers/linear_pid.py`
+
+**LinearPID 類別**：
+- 標準線性 PID 控制器
+- 實現標準並聯式 PID 控制律
+- 支持 anti-windup 機制
+
+**主要方法**：
+```python
+compute(error, dt) -> float           # 計算 PID 控制輸出
+update_gains(kp, ki, kd)             # 更新增益（由 RL 調用）
+reset()                              # 重置狀態
+get_state() -> dict                  # 獲取當前狀態
+```
+
+#### 6.2 `controllers/nonlinear_pid.py`
+
+**NonlinearPID 類別**（實驗性）：
+- 非線性 PID 控制器（參考 AirPilot Eq.6-7）
+- 實現正規化速度輸出
+- 支持最大速度限制
+
+**設計特點**：
+- 參考 AirPilot 論文實現
+- 可通過 `config.yaml` 中的 `controller_type` 選擇
+
+---
+
+### 7. `dppo_model.py` - DPPO 模型（骨架實現）
 
 **角色**：實現 Diffusion Policy + PPO 的混合算法（目前為骨架）
 
 **架構組成**：
 
-#### 5.1 核心組件
+#### 7.1 核心組件
 ```python
 1. SinusoidalPositionEmbeddings
    - 將擴散時間步編碼為向量
@@ -275,7 +364,7 @@ run_demo_episode():
    - ddim_sample：快速採樣（推理）
 ```
 
-#### 5.2 DPPO 算法流程（設計）
+#### 7.2 DPPO 算法流程（設計）
 ```python
 1. 收集軌跡（使用擴散策略採樣動作）
 2. 計算 GAE 優勢
@@ -407,23 +496,40 @@ run_demo_episode():
 ```
 demo.py
   ├── dppo_pid_env.py (make_env)
-  └── matplotlib (視覺化)
+  └── utils.visualization (plot_demo_results)
 
 train.py
   ├── dppo_pid_env.py (make_env)
   ├── stable_baselines3 (PPO, VecNormalize, Monitor)
+  ├── utils.training_metrics (TrainingMetricsTracker)
+  ├── utils.visualization (plot_airpilot_style_metrics)
   └── config.yaml
 
 evaluate.py
   ├── dppo_pid_env.py (make_env)
   ├── stable_baselines3 (PPO, VecNormalize)
-  ├── matplotlib (視覺化)
+  ├── utils.visualization (plot_episode, plot_summary, plot_gains_vs_error)
   └── config.yaml
 
 dppo_pid_env.py
   ├── gymnasium (基礎環境類)
   ├── numpy (數值計算)
   └── config.yaml
+
+utils/training_metrics.py
+  ├── numpy (數值計算)
+  └── json (數據保存)
+
+utils/visualization.py
+  ├── matplotlib (視覺化)
+  ├── numpy (數值計算)
+  └── utils.training_metrics (TrainingMetricsTracker)
+
+controllers/linear_pid.py
+  └── numpy (數值計算)
+
+controllers/nonlinear_pid.py
+  └── numpy (數值計算)
 
 dppo_model.py
   ├── torch (神經網路)
@@ -531,10 +637,20 @@ config = yaml.safe_load(open('config.yaml'))
 本專案採用清晰的模組化架構：
 
 1. **`dppo_pid_env.py`**：核心環境，定義控制問題
-2. **`train.py`**：訓練流程，使用 PPO 學習策略
-3. **`evaluate.py`**：評估工具，驗證模型性能
+2. **`train.py`**：訓練流程，使用 PPO 學習策略，集成訓練指標追蹤
+3. **`evaluate.py`**：評估工具，驗證模型性能，生成 AirPilot 風格圖表
 4. **`demo.py`**：測試工具，驗證環境正確性
-5. **`dppo_model.py`**：未來擴展，實現 DPPO 算法
+5. **`utils/`**：工具模組，提供訓練指標追蹤和可視化功能
+6. **`controllers/`**：控制器模組，提供模組化的 PID 實現
+7. **`dppo_model.py`**：未來擴展，實現 DPPO 算法
+
+### 新增功能亮點
+
+- **快速訓練模式**：參考 AirPilot 的快速驗證模式，支持 20,000 timesteps 快速測試
+- **訓練指標追蹤**：自動追蹤 Effective Speed、Settling Time、Overshoot 等指標
+- **AirPilot 風格可視化**：生成與 AirPilot 論文一致的圖表
+- **模組化設計**：控制器和可視化函數獨立成模組，提高可維護性
+- **非線性 PID 支持**：實驗性功能，可通過配置選擇
 
 所有模組通過標準介面（Gymnasium、YAML 配置）連接，確保良好的可維護性和擴展性。
 

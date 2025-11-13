@@ -20,6 +20,7 @@ from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
 from dppo_pid_env import make_env
+from utils import TrainingMetricsTracker, plot_airpilot_style_metrics
 
 
 def plot_training_results(log_dir: str):
@@ -198,15 +199,28 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
     print("=" * 60)
     print(f"Configuration: {config_path}")
     print()
+    # Check for quick test mode (AirPilot style)
+    quick_mode = config['training'].get('quick_test_mode', False)
+    if quick_mode:
+        total_timesteps = config['training']['quick_test_timesteps']
+        net_arch = config['training']['quick_test_net_arch']
+        print("⚠️  快速訓練模式啟用（AirPilot 風格）")
+        print(f"   訓練步數: {total_timesteps:,}")
+        print(f"   網路架構: {net_arch}")
+        print("=" * 60)
+    else:
+        total_timesteps = config['training']['total_timesteps']
+        net_arch = config['training'].get('policy_net_arch', [128, 128])
+
     print("PPO Hyperparameters (Recommended Settings):")
-    print(f"  Policy Network:    {config['training'].get('policy_net_arch', [128, 128])}")
-    print(f"  Value Network:     {config['training'].get('value_net_arch', [128, 128])}")
+    print(f"  Policy Network:    {net_arch}")
+    print(f"  Value Network:     {net_arch}")
     print(f"  Learning Rate:     {config['training']['learning_rate']} (3×10⁻⁴)")
     print(f"  n_steps:           {config['training']['n_steps']}")
     print(f"  Batch Size:        {config['training']['batch_size']}")
     print(f"  Gamma (γ):         {config['training']['gamma']}")
     print(f"  GAE Lambda (λ):    {config['training']['gae_lambda']}")
-    print(f"  Total Steps:       {config['training']['total_timesteps']:,}")
+    print(f"  Total Steps:       {total_timesteps:,}")
     print(f"  VecNormalize:      {'Enabled' if config['training'].get('use_vec_normalize', True) else 'Disabled'}")
     print("=" * 60)
 
@@ -251,12 +265,9 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
     else:
         print("[3/5] Creating new PPO model...")
 
-        # Get network architecture from config
-        policy_net = config['training'].get('policy_net_arch', [128, 128])
-        value_net = config['training'].get('value_net_arch', [128, 128])
-
-        print(f"Policy network architecture: {policy_net}")
-        print(f"Value network architecture: {value_net}")
+        # Use net_arch determined earlier (from quick mode check or default)
+        print(f"Policy network architecture: {net_arch}")
+        print(f"Value network architecture: {net_arch}")
 
         model = PPO(
             policy="MlpPolicy",
@@ -274,12 +285,15 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
             verbose=1,
             tensorboard_log=config['logging']['tensorboard_log'],
             policy_kwargs=dict(
-                net_arch=[dict(pi=policy_net, vf=value_net)]
+                net_arch=[dict(pi=net_arch, vf=net_arch)]
             )
         )
 
     # Setup callbacks
     print("[4/5] Setting up training callbacks...")
+
+    # Create training metrics tracker (AirPilot style)
+    metrics_tracker = TrainingMetricsTracker()
 
     # Checkpoint callback - save model periodically
     checkpoint_callback = CheckpointCallback(
@@ -289,9 +303,47 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
         save_vecnormalize=True
     )
 
+    # Custom evaluation callback with metrics tracking
+    class MetricsEvalCallback(EvalCallback):
+        """
+        自定義評估回調，記錄訓練指標（AirPilot 風格）
+        """
+        def __init__(self, *args, metrics_tracker=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.metrics_tracker = metrics_tracker
+        
+        def _on_step(self) -> bool:
+            result = super()._on_step()
+            
+            # 在評估時記錄指標
+            if self.eval_freq > 0 and self.n_calls % self.eval_freq == 0:
+                # 獲取評估環境的歷史
+                try:
+                    # 解包環境以獲取實際環境實例
+                    if hasattr(self.eval_env, 'venv'):
+                        env = self.eval_env.venv.envs[0]
+                    elif hasattr(self.eval_env, 'envs'):
+                        env = self.eval_env.envs[0]
+                    else:
+                        env = None
+                    
+                    if env and hasattr(env, 'get_history'):
+                        history = env.get_history()
+                        if history and history.get('position'):
+                            self.metrics_tracker.log_episode(
+                                timestep=self.num_timesteps,
+                                episode_history=history
+                            )
+                except Exception as e:
+                    # 如果獲取歷史失敗，不影響訓練
+                    pass
+            
+            return result
+
     # Evaluation callback - evaluate periodically and save best model
-    eval_callback = EvalCallback(
+    eval_callback = MetricsEvalCallback(
         eval_env,
+        metrics_tracker=metrics_tracker,
         best_model_save_path=config['logging']['save_path'],
         log_path='./eval_logs/',
         eval_freq=10000,  # Evaluate every 10k steps
@@ -322,7 +374,7 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
 
     try:
         model.learn(
-            total_timesteps=config['training']['total_timesteps'],
+            total_timesteps=total_timesteps,
             callback=callbacks,
             progress_bar=use_progress_bar
         )
@@ -341,6 +393,17 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
         train_env.save(stats_path)
         print(f"✓ Normalization statistics saved to: {stats_path}")
 
+        # Save training metrics and plot AirPilot style charts
+        print("\n" + "=" * 60)
+        print("Saving training metrics...")
+        print("=" * 60)
+        metrics_tracker.save()
+        try:
+            plot_airpilot_style_metrics(metrics_tracker)
+            print("✓ Training metrics visualization completed!")
+        except Exception as e:
+            print(f"⚠ Warning: Could not generate training metrics visualization: {e}")
+
     except KeyboardInterrupt:
         print("\n\n⚠ Training interrupted by user!")
         interrupt_model_path = os.path.join(
@@ -354,6 +417,12 @@ def train(config_path: str = "config.yaml", resume: bool = False, model_path: st
         stats_path = interrupt_model_path.replace('.zip', '_vec_normalize.pkl')
         train_env.save(stats_path)
         print(f"✓ Normalization statistics saved to: {stats_path}")
+
+        # Save training metrics even if interrupted
+        try:
+            metrics_tracker.save()
+        except:
+            pass
 
     finally:
         # Cleanup
