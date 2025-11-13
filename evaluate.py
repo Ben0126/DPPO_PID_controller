@@ -196,7 +196,7 @@ def evaluate_model(
         plot_summary(episode_rewards, episode_lengths, all_histories, output_dir)
 
         print(f"[OK] Visualizations saved to: {output_dir}")
-        print("\n所有評估圖表已顯示在視窗中。")
+        print("\nAll evaluation plots have been displayed.")
 
     # Cleanup
     eval_env.close()
