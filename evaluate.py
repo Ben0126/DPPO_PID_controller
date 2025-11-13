@@ -47,10 +47,10 @@ def evaluate_model(
 
     # Create environment
     print("\n[1/3] Creating evaluation environment...")
-    # Create a single environment instance that we can access later
+    # Create a single environment instance that we can access directly
     actual_env = make_env(config_path)
     
-    # Wrap in DummyVecEnv for compatibility (use the same instance)
+    # Wrap in DummyVecEnv for compatibility (use lambda to return the same instance)
     eval_env = DummyVecEnv([lambda: actual_env])
 
     # Load normalization statistics if they exist
@@ -82,6 +82,33 @@ def evaluate_model(
         done = False
         last_info = None
 
+        # Get the actual environment instance for this episode
+        # Use the actual_env we created earlier, or try to unwrap
+        actual_env_instance = actual_env  # Use the direct reference first
+        
+        # Also try to get from wrapped environment as fallback
+        try:
+            if hasattr(eval_env, 'venv'):
+                # VecNormalize wrapper
+                if hasattr(eval_env.venv, 'envs'):
+                    # DummyVecEnv - should contain our actual_env
+                    wrapped_env = eval_env.venv.envs[0]
+                    if wrapped_env is not actual_env:
+                        # If different, use the wrapped one (should be the same instance)
+                        actual_env_instance = wrapped_env
+                elif hasattr(eval_env.venv, 'env'):
+                    wrapped_env = eval_env.venv.env
+                    if wrapped_env is not actual_env:
+                        actual_env_instance = wrapped_env
+            elif hasattr(eval_env, 'envs'):
+                # Direct DummyVecEnv
+                wrapped_env = eval_env.envs[0]
+                if wrapped_env is not actual_env:
+                    actual_env_instance = wrapped_env
+        except Exception as e:
+            print(f"  [WARNING] 無法獲取環境實例: {e}")
+            # Keep using actual_env as fallback
+
         while not done:
             # Get action from trained policy
             action, _ = model.predict(obs, deterministic=True)
@@ -95,40 +122,86 @@ def evaluate_model(
             if done:
                 break
 
+        # IMPORTANT: Get history from the actual environment instance BEFORE next reset
+        # The history is stored in the actual_env instance, not in the wrapped environment
+        history = {}
+        if actual_env and hasattr(actual_env, 'get_history'):
+            try:
+                history = actual_env.get_history()
+                # Debug: print detailed history info
+                if history:
+                    time_len = len(history.get('time', []))
+                    pos_len = len(history.get('position', []))
+                    print(f"  [DEBUG] Episode {episode + 1} 歷史記錄 - time: {time_len}, position: {pos_len}")
+                    if time_len > 0:
+                        print(f"  [DEBUG] 時間範圍: {history['time'][0]:.3f} 到 {history['time'][-1]:.3f}")
+                    else:
+                        print(f"  [DEBUG] 歷史記錄字典鍵: {list(history.keys())}")
+                        # Check if history is initialized but empty
+                        if 'time' in history:
+                            print(f"  [DEBUG] history['time'] 類型: {type(history['time'])}, 長度: {len(history['time'])}")
+            except Exception as e:
+                print(f"  [WARNING] 獲取歷史記錄失敗: {e}")
+                import traceback
+                traceback.print_exc()
+        
         # Store results
         episode_rewards.append(episode_reward)
         episode_lengths.append(episode_length)
 
-        # Get history from environment (unwrap if needed)
-        # VecNormalize wraps DummyVecEnv, which wraps the actual env
-        unwrapped_env = eval_env
-        while hasattr(unwrapped_env, 'venv') or hasattr(unwrapped_env, 'envs'):
-            if hasattr(unwrapped_env, 'venv'):
-                unwrapped_env = unwrapped_env.venv
-            elif hasattr(unwrapped_env, 'envs'):
-                # DummyVecEnv has envs attribute (list of environments)
-                unwrapped_env = unwrapped_env.envs[0]
-            else:
-                break
-        
-        # Get history from the actual environment
-        if hasattr(unwrapped_env, 'get_history'):
-            history = unwrapped_env.get_history()
-        elif hasattr(actual_env, 'get_history'):
-            history = actual_env.get_history()
-        else:
-            history = {}
-        
-        # Debug: Check if history is empty
-        if not history or (history.get('time') and len(history['time']) == 0):
-            # Try to get from the wrapped environment directly
-            if hasattr(eval_env, 'venv') and hasattr(eval_env.venv, 'envs'):
+        # Fallback: try to get from wrapped environment if direct access failed
+        if not history or not history.get('time') or len(history.get('time', [])) == 0:
+            # Try using actual_env_instance as fallback
+            if actual_env_instance and actual_env_instance is not actual_env:
                 try:
-                    direct_env = eval_env.venv.envs[0]
-                    if hasattr(direct_env, 'get_history'):
-                        history = direct_env.get_history()
+                    fallback_history = actual_env_instance.get_history()
+                    if fallback_history and fallback_history.get('time') and len(fallback_history['time']) > 0:
+                        history = fallback_history
+                        print(f"  [DEBUG] 使用包裝環境的歷史記錄")
                 except:
                     pass
+            
+            # Last resort: try to unwrap manually
+            if not history or not history.get('time') or len(history.get('time', [])) == 0:
+                unwrapped_env = eval_env
+                depth = 0
+                while unwrapped_env is not None and depth < 5:
+                    if hasattr(unwrapped_env, 'get_history'):
+                        try:
+                            fallback_history = unwrapped_env.get_history()
+                            if fallback_history and fallback_history.get('time') and len(fallback_history['time']) > 0:
+                                history = fallback_history
+                                print(f"  [DEBUG] 使用深度 {depth} 的包裝環境歷史記錄")
+                                break
+                        except:
+                            pass
+                    if hasattr(unwrapped_env, 'venv'):
+                        unwrapped_env = unwrapped_env.venv
+                    elif hasattr(unwrapped_env, 'envs') and len(unwrapped_env.envs) > 0:
+                        unwrapped_env = unwrapped_env.envs[0]
+                    elif hasattr(unwrapped_env, 'env'):
+                        unwrapped_env = unwrapped_env.env
+                    else:
+                        break
+                    depth += 1
+        
+        # Validate history
+        if not history or not history.get('time') or len(history['time']) == 0:
+            print(f"  [WARNING] Episode {episode + 1} 的歷史記錄為空或無效")
+            print(f"  [DEBUG] actual_env_instance: {actual_env_instance is not None}")
+            print(f"  [DEBUG] has get_history: {actual_env_instance and hasattr(actual_env_instance, 'get_history') if actual_env_instance else False}")
+            # Create empty history structure to prevent errors
+            history = {
+                'time': [],
+                'position': [],
+                'velocity': [],
+                'reference': [],
+                'error': [],
+                'control': [],
+                'kp': [],
+                'ki': [],
+                'kd': []
+            }
         
         all_histories.append(history)
 

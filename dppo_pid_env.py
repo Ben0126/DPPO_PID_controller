@@ -120,12 +120,23 @@ class DPPOPIDEnv(gym.Env):
         self.reference_scale = obs_config['reference_scale']
         self.gain_scale = obs_config['gain_scale']
 
-        # Reward weights
+        # Reward configuration
         reward_config = self.config['reward']
-        self.lambda_error = reward_config['lambda_error']
-        self.lambda_velocity = reward_config['lambda_velocity']
-        self.lambda_control = reward_config['lambda_control']
-        self.lambda_overshoot = reward_config['lambda_overshoot']
+        self.reward_type = reward_config.get('reward_type', 'continuous')
+        
+        # Continuous reward weights
+        self.lambda_error = reward_config.get('lambda_error', 1.0)
+        self.lambda_velocity = reward_config.get('lambda_velocity', 0.2)
+        self.lambda_control = reward_config.get('lambda_control', 0.01)
+        self.lambda_overshoot = reward_config.get('lambda_overshoot', 0.05)
+        
+        # Task completion reward parameters (AirPilot style)
+        if self.reward_type == 'task_completion':
+            task_config = reward_config.get('task_completion', {})
+            self.stable_threshold = task_config.get('stable_threshold', 0.1)
+            self.stable_timesteps = task_config.get('stable_timesteps', 50)
+            self.effective_speed_multiplier = task_config.get('effective_speed_multiplier', 10.0)
+            self.distance_scale = task_config.get('distance_scale', 1.0)
 
         # Episode configuration
         self.max_steps = self.config['episode']['max_steps']
@@ -155,6 +166,14 @@ class DPPOPIDEnv(gym.Env):
 
         # Time tracking
         self.sim_time = 0.0
+        
+        # Task completion reward state (only for task_completion reward type)
+        if self.reward_type == 'task_completion':
+            self.task_start_pos = 0.0
+            self.task_target_pos = 0.0
+            self.task_distance = 0.0
+            self.task_stable_counter = 0
+            self.task_timestep = 0
 
     def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
         """
@@ -176,8 +195,21 @@ class DPPOPIDEnv(gym.Env):
         # Set random initial reference
         self.reference = self.np_random.uniform(self.r_min, self.r_max)
 
-        # Set random initial position (near reference)
-        self.x = self.reference + self.np_random.uniform(-0.5, 0.5)
+        # Set random initial position (near reference, 縮小初始誤差範圍)
+        # 減少初始誤差，避免系統一開始就不穩定
+        initial_error_range = 0.2  # 從 0.5 縮小到 0.2
+        self.x = self.reference + self.np_random.uniform(-initial_error_range, initial_error_range)
+        
+        # 確保初始位置不會超出安全範圍
+        self.x = np.clip(self.x, -self.termination_threshold * 0.8, self.termination_threshold * 0.8)
+        
+        # Initialize task completion reward state (if using task_completion reward)
+        if self.reward_type == 'task_completion':
+            self.task_start_pos = self.x
+            self.task_target_pos = self.reference
+            self.task_distance = abs(self.task_target_pos - self.task_start_pos) * self.distance_scale
+            self.task_stable_counter = 0
+            self.task_timestep = 0
 
         # Reset episode tracking
         self.current_step = 0
@@ -383,9 +415,30 @@ class DPPOPIDEnv(gym.Env):
     def _calculate_reward(self, error: float, error_dot: float, u: float) -> float:
         """
         Calculate the reward for the current step.
+        
+        Supports two reward types:
+        1. "continuous": Continuous penalty-based reward (negative values)
+        2. "task_completion": Task completion reward (positive values, AirPilot style)
 
+        Args:
+            error: Current tracking error
+            error_dot: Rate of change of error
+            u: Control input
+
+        Returns:
+            Scalar reward value
+        """
+        if self.reward_type == 'task_completion':
+            return self._calculate_task_completion_reward(error)
+        else:
+            return self._calculate_continuous_reward(error, error_dot, u)
+    
+    def _calculate_continuous_reward(self, error: float, error_dot: float, u: float) -> float:
+        """
+        Calculate continuous penalty-based reward (default, negative values).
+        
         Reward components:
-        1. Tracking error: Penalize squared error
+        1. Tracking error: Penalize squared error (scaled to prevent extreme values)
         2. Velocity error: Penalize high velocities
         3. Control effort: Penalize excessive control
         4. Overshoot: Heavily penalize when moving away from setpoint
@@ -396,13 +449,20 @@ class DPPOPIDEnv(gym.Env):
             u: Control input
 
         Returns:
-            Scalar reward value
+            Scalar reward value (negative)
         """
-        # 1. Tracking error penalty
-        error_penalty = -self.lambda_error * error**2
+        # 1. Tracking error penalty (使用縮放避免極端值)
+        # 限制誤差範圍，避免獎勵過大負值
+        abs_error = abs(error)
+        # 使用飽和函數限制誤差影響範圍（進一步縮小範圍）
+        saturated_error = min(abs_error, 2.0)  # 限制最大誤差影響為 2.0（從 3.0 降低）
+        error_penalty = -self.lambda_error * saturated_error**2
 
         # 2. Velocity penalty (to prevent oscillations)
-        velocity_penalty = -self.lambda_velocity * self.x_dot**2
+        # 限制速度影響範圍
+        abs_velocity = abs(self.x_dot)
+        saturated_velocity = min(abs_velocity, 3.0)  # 限制最大速度影響為 3.0（從 5.0 降低）
+        velocity_penalty = -self.lambda_velocity * saturated_velocity**2
 
         # 3. Control effort penalty
         control_penalty = -self.lambda_control * u**2
@@ -420,6 +480,54 @@ class DPPOPIDEnv(gym.Env):
                        control_penalty + overshoot_penalty)
 
         return total_reward
+    
+    def _calculate_task_completion_reward(self, error: float) -> float:
+        """
+        Calculate task completion reward (AirPilot style, positive values).
+        
+        Reward logic:
+        - If stable for stable_timesteps: reward = exp(effective_speed * multiplier)
+        - Otherwise: reward = -|error| (approaching reward)
+        
+        Args:
+            error: Current tracking error
+            
+        Returns:
+            Scalar reward value (positive when task completed, negative otherwise)
+        """
+        self.task_timestep += 1
+        abs_error = abs(error)
+        
+        # Check stability
+        if abs_error < self.stable_threshold:
+            self.task_stable_counter += 1
+        else:
+            self.task_stable_counter = 0
+        
+        # Calculate reward
+        if self.task_stable_counter >= self.stable_timesteps:
+            # Task completed - calculate effective speed reward
+            # Time taken (excluding stable period)
+            time_taken = self.dt_outer * max(1, self.task_timestep - self.stable_timesteps)
+            
+            if time_taken > 0 and self.task_distance > 0:
+                effective_speed = self.task_distance / time_taken
+                reward = np.exp(effective_speed * self.effective_speed_multiplier)
+                
+                # Reset task (generate new target)
+                self.reference = self.np_random.uniform(self.r_min, self.r_max)
+                self.task_start_pos = self.x
+                self.task_target_pos = self.reference
+                self.task_distance = abs(self.task_target_pos - self.task_start_pos) * self.distance_scale
+                self.task_stable_counter = 0
+                self.task_timestep = 0
+                
+                return reward
+            else:
+                return 0.0
+        else:
+            # Not stable yet - approaching reward (negative)
+            return -abs_error
 
     def _check_termination(self) -> bool:
         """
@@ -427,12 +535,19 @@ class DPPOPIDEnv(gym.Env):
 
         Terminate if:
         - Position exceeds safe bounds (system instability)
+        - Velocity exceeds safe bounds (system instability)
 
         Returns:
             True if episode should terminate, False otherwise
         """
-        # Check position bounds
+        # Check position bounds (放寬終止條件，避免過早終止)
         if abs(self.x) > self.termination_threshold:
+            return True
+
+        # Check velocity bounds (添加速度檢查，但使用較寬鬆的閾值)
+        # 避免因速度過大而過早終止，給系統更多學習機會
+        velocity_threshold = self.termination_threshold * 2.0  # 速度閾值為位置的 2 倍
+        if abs(self.x_dot) > velocity_threshold:
             return True
 
         return False

@@ -92,6 +92,18 @@ def plot_episode(history, episode_idx, reward, output_dir, title_prefix="Episode
         output_dir: Directory to save plots
         title_prefix: Prefix for plot title
     """
+    # Validate history
+    if not history or not history.get('time') or len(history['time']) == 0:
+        print(f"  [WARNING] 無法繪製 {title_prefix} Episode {episode_idx + 1}：歷史記錄為空")
+        return
+    
+    # Check if all required keys exist
+    required_keys = ['time', 'position', 'reference', 'error', 'control', 'kp', 'ki', 'kd', 'velocity']
+    missing_keys = [key for key in required_keys if key not in history or len(history[key]) == 0]
+    if missing_keys:
+        print(f"  [WARNING] {title_prefix} Episode {episode_idx + 1} 缺少數據：{missing_keys}")
+        return
+    
     fig = plt.figure(figsize=(15, 10))
     gs = GridSpec(3, 2, figure=fig)
 
@@ -104,6 +116,11 @@ def plot_episode(history, episode_idx, reward, output_dir, title_prefix="Episode
     ki = np.array(history['ki'])
     kd = np.array(history['kd'])
     velocity = np.array(history['velocity'])
+    
+    # Validate array lengths
+    if len(time) == 0 or len(position) == 0:
+        print(f"  [WARNING] {title_prefix} Episode {episode_idx + 1} 數據長度為 0")
+        return
 
     # Plot 1: Position Tracking
     ax1 = fig.add_subplot(gs[0, :])
