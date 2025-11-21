@@ -138,6 +138,18 @@ class DPPOPIDEnv(gym.Env):
             self.effective_speed_multiplier = task_config.get('effective_speed_multiplier', 10.0)
             self.distance_scale = task_config.get('distance_scale', 1.0)
 
+        # Gaussian reward parameters
+        if self.reward_type == 'gaussian':
+            gaussian_config = reward_config.get('gaussian', {})
+            self.sigma_error = gaussian_config.get('sigma_error', 0.5)
+            self.sigma_velocity = gaussian_config.get('sigma_velocity', 1.0)
+            self.w_error = gaussian_config.get('w_error', 0.7)
+            self.w_velocity = gaussian_config.get('w_velocity', 0.3)
+            self.w_action = gaussian_config.get('w_action', 0.05)
+            self.stability_bonus = gaussian_config.get('stability_bonus', 0.1)
+            self.stable_error_thresh = gaussian_config.get('stable_error_thresh', 0.1)
+            self.stable_vel_thresh = gaussian_config.get('stable_vel_thresh', 0.2)
+
         # Episode configuration
         self.max_steps = self.config['episode']['max_steps']
         self.termination_threshold = self.config['episode']['termination_threshold']
@@ -430,8 +442,47 @@ class DPPOPIDEnv(gym.Env):
         """
         if self.reward_type == 'task_completion':
             return self._calculate_task_completion_reward(error)
+        elif self.reward_type == 'gaussian':
+            return self._calculate_gaussian_reward(error, error_dot, u)
         else:
             return self._calculate_continuous_reward(error, error_dot, u)
+    
+    def _calculate_gaussian_reward(self, error: float, error_dot: float, u: float) -> float:
+        """
+        Calculate Gaussian-based bounded reward (0 to 1 + bonus).
+        
+        Reward = w_err * exp(-e^2/sigma_e) + w_vel * exp(-v^2/sigma_v) - w_u * |u| + bonus
+        
+        Args:
+            error: Current tracking error
+            error_dot: Rate of change of error (approx -velocity)
+            u: Control input
+
+        Returns:
+            Scalar reward value
+        """
+        # 1. Error component (Gaussian)
+        error_reward = self.w_error * np.exp(-(error**2) / self.sigma_error)
+        
+        # 2. Velocity component (Gaussian)
+        # Minimize velocity (stabilization)
+        velocity = -error_dot # Assuming ref is constant
+        velocity_reward = self.w_velocity * np.exp(-(velocity**2) / self.sigma_velocity)
+        
+        # 3. Action penalty (Linear)
+        # Penalize large control inputs slightly
+        action_penalty = self.w_action * abs(u)
+        
+        # 4. Stability Bonus
+        # Give extra reward if system is very close to target and stable
+        is_stable = (abs(error) < self.stable_error_thresh) and \
+                    (abs(velocity) < self.stable_vel_thresh)
+        bonus = self.stability_bonus if is_stable else 0.0
+        
+        # Total reward
+        total_reward = error_reward + velocity_reward - action_penalty + bonus
+        
+        return total_reward
     
     def _calculate_continuous_reward(self, error: float, error_dot: float, u: float) -> float:
         """

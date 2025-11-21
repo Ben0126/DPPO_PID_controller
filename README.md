@@ -1,5 +1,6 @@
 # DPPO for Real-Time Adaptive PID Tuning
 # DPPO 實時自適應 PID 調參系統
+# Last Updated: NOV 21 2025
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -499,21 +500,21 @@ Including current gains enables the agent to learn **relative adjustments**.
 #### Reward Function (𝐑) / 獎勵函數 (𝐑)
 
 **English:**
-Multi-objective reward combining four components:
+Gaussian-based bounded reward (0 to 1) with stability bonus:
 
 **中文：**
-結合四個組成部分的多目標獎勵：
+基於高斯的有界獎勵（0 到 1）和穩定性獎勵：
 
 ```python
-R = -λ₁·e² - λ₂·ẋ² - λ₃·u² - λ₄·max(0, e·ė)
+R = w_err * exp(-e²/σ_e) + w_vel * exp(-v²/σ_v) - w_u * |u| + Bonus
 ```
 
-| Component<br>組成部分 | Weight (λ)<br>權重 (λ) | Purpose<br>目的 |
+| Component<br>組成部分 | Weight/Param<br>權重/參數 | Purpose<br>目的 |
 |-----------|------------|---------|
-| Tracking Error<br>跟蹤誤差 | λ₁ = 5.0 | Minimize deviation from setpoint<br>最小化與設定值的偏差 |
-| Velocity Penalty<br>速度懲罰 | λ₂ = 0.5 | Reduce oscillations<br>減少振盪 |
-| Control Effort<br>控制努力 | λ₃ = 0.01 | Energy efficiency<br>能量效率 |
-| Overshoot<br>超調 | λ₄ = 0.2 | Penalize moving away from setpoint<br>懲罰遠離設定值的移動 |
+| Error Reward<br>誤差獎勵 | w=0.7, σ=0.5 | Maximize when error is near 0<br>當誤差接近 0 時最大化 |
+| Velocity Reward<br>速度獎勵 | w=0.3, σ=1.0 | Maximize when velocity is near 0<br>當速度接近 0 時最大化 |
+| Control Penalty<br>控制懲罰 | w=0.05 | Penalize large control inputs<br>懲罰大的控制輸入 |
+| Stability Bonus<br>穩定獎勵 | +0.1 | Extra reward when stable at target<br>在目標處穩定時的額外獎勵 |
 
 #### Episode Termination / 回合終止
 

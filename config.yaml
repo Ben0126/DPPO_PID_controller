@@ -60,27 +60,35 @@ observation:
 
 # Reward Function Configuration
 # 獎勵函數類型選擇：
-#   - "continuous": 連續型懲罰獎勵（負數，適合連續跟蹤任務）- 當前默認
+#   - "continuous": 連續型懲罰獎勵（負數，適合連續跟蹤任務）- 舊版默認
+#   - "gaussian": 高斯型獎勵（0-1，正數，適合強化學習控制任務）- 推薦
 #   - "task_completion": 任務完成型獎勵（正數，AirPilot 風格，適合點對點導航）- 實驗性
 reward:
-  reward_type: "continuous"  # "continuous" 或 "task_completion"（推薦使用 continuous 用於連續跟蹤任務）
-  
+  reward_type: "gaussian"  # 切換到高斯型獎勵
+
+  # 高斯型獎勵參數（reward_type: "gaussian" 時使用）
+  # r = w_err * exp(-error^2 / sigma_err) + w_vel * exp(-velocity^2 / sigma_vel) + stability_bonus
+  gaussian:
+    sigma_error: 0.5        # 誤差的高斯寬度（越小越嚴格）
+    sigma_velocity: 1.0     # 速度的高斯寬度
+    w_error: 0.7            # 誤差項權重
+    w_velocity: 0.3         # 速度項權重
+    w_action: 0.05          # 動作懲罰權重（從總獎勵中扣除）
+    stability_bonus: 0.1    # 穩定獎勵（當誤差和速度都很小時給予額外獎勵）
+    stable_error_thresh: 0.1 # 視為穩定的誤差閾值
+    stable_vel_thresh: 0.2   # 視為穩定的速度閾值
+
   # 連續型獎勵權重（reward_type: "continuous" 時使用）
-  lambda_error: 1.0         # Tracking error weight (進一步降低，目標獎勵範圍)
-  lambda_velocity: 0.2       # Velocity error weight (進一步降低)
-  lambda_control: 0.01       # Control effort weight (保持不變)
-  lambda_overshoot: 0.05     # Overshoot penalty weight (進一步降低)
+  lambda_error: 1.0         # Tracking error weight
+  lambda_velocity: 0.2       # Velocity error weight
+  lambda_control: 0.01       # Control effort weight
+  lambda_overshoot: 0.05     # Overshoot penalty weight
   
-  # 任務完成型獎勵參數（reward_type: "task_completion" 時使用，AirPilot 風格）
-  # ⚠️ 注意：task_completion 獎勵適合點對點導航任務，不適合連續跟蹤任務
-  # 如果必須使用，建議調整參數：
-  #   - 降低 effective_speed_multiplier（從 10.0 降到 2.0-5.0）以減少極端獎勵值
-  #   - 放寬 stable_threshold（從 0.1 提高到 0.2-0.5）以更容易達到穩定
-  #   - 減少 stable_timesteps（從 50 降到 20-30）以適應快速變化的設定值
+  # 任務完成型獎勵參數（reward_type: "task_completion" 時使用）
   task_completion:
-    stable_threshold: 0.1      # 穩定閾值（誤差小於此值視為穩定）
-    stable_timesteps: 50       # 需要穩定的時間步數（AirPilot: 50）
-    effective_speed_multiplier: 10.0  # 有效速度乘數（AirPilot: 10，建議降低到 2.0-5.0）
+    stable_threshold: 0.1      # 穩定閾值
+    stable_timesteps: 50       # 需要穩定的時間步數
+    effective_speed_multiplier: 5.0  # 有效速度乘數
     distance_scale: 1.0         # 距離縮放
 
 # Episode Configuration
