@@ -1,0 +1,60 @@
+# Diffusion Policy Configuration
+# Phase 3: Vision-based diffusion model for action sequence generation
+
+# Vision encoder
+vision:
+  image_size: 64
+  channels: 3                     # RGB
+  T_obs: 2                       # number of observation frames (history)
+  feature_dim: 256                # output feature vector size
+
+# Diffusion process
+diffusion:
+  num_timesteps: 100              # diffusion steps for training
+  beta_schedule: "cosine"         # "cosine" or "linear"
+  beta_start: 0.0001
+  beta_end: 0.02
+  ddim_steps: 10                  # inference steps (fast sampling)
+
+# 1D U-Net architecture
+unet:
+  down_dims: [256, 512]           # encoder channel dimensions
+  kernel_size: 5                  # 1D convolution kernel size
+  n_groups: 8                     # GroupNorm groups
+  time_embed_dim: 128             # timestep embedding dimension
+
+# Action prediction
+action:
+  T_pred: 8                      # prediction horizon (future steps)
+  T_action: 4                    # execution horizon (steps actually executed)
+  action_dim: 4                  # 4 motor thrusts
+
+# Supervised pre-training (Phase 3a)
+training:
+  batch_size: 256
+  learning_rate: 0.0001           # 1e-4
+  weight_decay: 0.01              # AdamW weight decay
+  num_epochs: 500
+  lr_scheduler: "cosine"          # cosine annealing
+  warmup_epochs: 10
+  grad_clip: 1.0
+  dataset_path: "data/expert_demos.h5"
+
+# DPPO fine-tuning (Phase 3b)
+dppo:
+  enabled: false                  # set true for RL fine-tuning
+  advantage_beta: 1.0             # advantage weighting coefficient
+  gamma: 0.99
+  gae_lambda: 0.95
+  n_rollout_steps: 2048
+  n_epochs: 5
+  learning_rate: 0.00003          # 3e-5 (lower for fine-tuning)
+  value_hidden_dim: 256
+  value_lr: 0.001
+
+# Logging
+logging:
+  tensorboard_log: "./logs/diffusion_policy/"
+  save_path: "./checkpoints/diffusion_policy/"
+  checkpoint_freq: 50             # save every N epochs
+  log_freq: 10                    # log metrics every N batches
