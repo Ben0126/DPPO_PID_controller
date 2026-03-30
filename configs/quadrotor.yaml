@@ -32,14 +32,14 @@ environment:
 # Reward Function Configuration (Gaussian style)
 reward:
   reward_type: "gaussian"
-  sigma_pos: 0.5                  # position error Gaussian width
+  sigma_pos: 0.1                  # position error Gaussian width (tighter → demands precision)
   sigma_vel: 1.0                  # velocity Gaussian width
   sigma_ang: 1.0                  # angular velocity Gaussian width
-  w_pos: 0.5                     # position error weight
-  w_vel: 0.2                     # velocity weight
-  w_ang: 0.2                     # angular velocity weight
-  w_action: 0.05                 # action penalty weight
-  alive_bonus: 0.1               # per-step survival bonus
+  w_pos: 0.8                     # position error weight (dominant signal)
+  w_vel: 0.1                     # velocity weight
+  w_ang: 0.1                     # angular velocity weight
+  w_action: 0.02                 # action penalty weight (reduced to not discourage correction)
+  alive_bonus: 0.05              # per-step survival bonus (reduced to not dominate)
   crash_penalty: 10.0            # penalty for crash/termination
 
 # Disturbance Model
