@@ -2,17 +2,19 @@
 # Phase 1: State-based PPO for direct motor control
 
 training:
-  total_timesteps: 5000000
-  learning_rate: 0.0003           # 3e-4
+  total_timesteps: 2000000
+  learning_rate: 0.0003           # 3e-4 (linearly annealed to 0)
   n_steps: 4096                   # rollout length per update
   batch_size: 256                 # mini-batch size
   gamma: 0.99                    # discount factor
   gae_lambda: 0.95               # GAE lambda
-  clip_range: 0.2                # PPO clip parameter
-  n_epochs: 10                   # optimization epochs per update
-  ent_coef: 0.01                 # entropy coefficient (exploration)
-  vf_coef: 0.5                   # value function loss coefficient
+  clip_range: 0.2                # PPO clip parameter (annealed to clip_range_end)
+  clip_range_end: 0.05           # final clip range at end of training
+  n_epochs: 10                   # optimization epochs per update (KL guard prevents overtraining)
+  ent_coef: 0.005                # entropy coefficient (reduced: policy matures past 300K)
+  vf_coef: 1.0                   # value function loss coefficient (increased to fix Value Loss ~55-80)
   max_grad_norm: 0.5             # gradient clipping
+  target_kl: 0.01                # KL early stopping threshold (prevents policy churn)
 
 network:
   hidden_dim: 256                # hidden layer size

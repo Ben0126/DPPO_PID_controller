@@ -139,12 +139,38 @@ def train(args):
             obs_rms.update(next_state)
             state_norm = obs_rms.normalize(next_state)
 
+        # Bootstrap value: if the rollout ended mid-episode, use V(last_next_state)
+        # so that GAE does not underestimate returns for the trailing partial episode.
+        last_done = memory['dones'][-1]
+        if last_done:
+            bootstrap_value = 0.0
+        else:
+            with torch.no_grad():
+                last_state_t = torch.FloatTensor(state_norm).unsqueeze(0).to(
+                    next(agent.critic.parameters()).device
+                )
+                bootstrap_value = agent.critic(last_state_t).item()
+
+        # Anneal learning rate and clip range linearly
+        frac = 1.0 - timestep / total_timesteps
+        lr_now = train_cfg['learning_rate'] * frac
+        for param_group in agent.optimizer.param_groups:
+            param_group['lr'] = lr_now
+
+        clip_start = train_cfg['clip_range']
+        clip_end = train_cfg.get('clip_range_end', clip_start)
+        agent.clip_range = clip_start * frac + clip_end * (1.0 - frac)
+
         # PPO update
-        metrics = agent.update(memory)
+        target_kl = train_cfg.get('target_kl', None)
+        metrics = agent.update(memory, last_value=bootstrap_value, target_kl=target_kl)
 
         writer.add_scalar('train/policy_loss', metrics['policy_loss'], timestep)
         writer.add_scalar('train/value_loss', metrics['value_loss'], timestep)
         writer.add_scalar('train/entropy', metrics['entropy'], timestep)
+        writer.add_scalar('train/learning_rate', lr_now, timestep)
+        writer.add_scalar('train/clip_range', agent.clip_range, timestep)
+        writer.add_scalar('train/kl_early_stop', int(metrics['kl_early_stop']), timestep)
 
         # Progress logging
         if len(recent_rewards) > 0:

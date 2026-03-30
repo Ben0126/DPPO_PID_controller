@@ -22,12 +22,23 @@ dppo/
 *.swo
 *~
 
-# Project specific
+# Claude Code local settings
+.claude/
+
+# Project specific - generated outputs (too large or re-generatable)
+checkpoints/
+logs/
+training_metrics/
 ppo_pid_logs/
-models/
 train_logs/
 eval_logs/
 evaluation_results/
+
+# Data files (re-generate with collect_data.py)
+data/*.h5
+data/*.pkl
+
+# Media / artifacts
 *.png
 *.pkl
 *.zip
