@@ -1,8 +1,12 @@
 # DPPO PID Controller - Research & Development Log
 
 > Project: Vision-based Diffusion Policy with PPO for Quadrotor Control
-> Date: 2026-03-30 ~ 2026-03-31
-> Pipeline: PPO Expert → Expert Data Collection → Diffusion Policy → DPPO Fine-tuning → RHC Evaluation
+> Date: 2026-03-30 ~ ongoing
+> Pipeline: PPO Expert → Expert Data Collection → Diffusion Policy → D²PPO (Dispersive Loss) → OneDP Distillation → RHC Evaluation
+>
+> **Research Plan Version:** v3.0 (updated 2026-03-31)
+> **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
+> **Core Contributions:** D²PPO Dispersive Loss (representation collapse prevention) + OneDP single-step distillation (62Hz+ deployment)
 
 ---
 
@@ -17,7 +21,8 @@
 3. [Phase 2-3: Diffusion Policy (Early Attempt)](#3-phase-2-3-diffusion-policy-early-attempt)
 4. [Environment Setup Issues](#4-environment-setup-issues)
 5. [Key Lessons Learned](#5-key-lessons-learned)
-6. [Appendix: Hyperparameter Reference](#6-appendix-hyperparameter-reference)
+6. [Research Direction v3.0 Updates](#6-research-direction-v30-updates)
+7. [Appendix: Hyperparameter Reference](#7-appendix-hyperparameter-reference)
 
 ---
 
@@ -268,6 +273,15 @@ With sigma=0.10, the reward at 0.1m is only 37% of perfect (vs 62% with sigma=0.
 - Z-axis error should decrease significantly
 - Episodes < 0.1m target: > 40/50
 
+**Phase gate to proceed to Phase 2:**
+
+| Metric | Target | Why This Threshold |
+|--------|--------|--------------------|
+| Mean position error | < 0.10m | Expert quality ceiling for imitation learning |
+| Episodes < 0.1m | > 40/50 | Consistency, not just mean |
+| Z-axis error | < 0.05m | Vertical axis is current bottleneck |
+| Crash rate | 0 | Safety prerequisite |
+
 *Results will be updated after training completes.*
 
 ---
@@ -313,6 +327,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
 
 ## 5. Key Lessons Learned
 
+
 ### 5.1 Reward Shaping
 
 - **Gaussian reward width (sigma) directly controls precision ceiling.** A loose sigma makes the reward landscape nearly flat near the target, removing the gradient signal needed for fine-grained control. Calculate the reward difference at your target error threshold before choosing sigma.
@@ -353,7 +368,7 @@ When training plateaus, follow this checklist:
 
 ---
 
-## 6. Appendix: Hyperparameter Reference
+## 7. Appendix: Hyperparameter Reference
 
 ### PPO Training (`configs/ppo_expert.yaml`)
 
@@ -404,3 +419,83 @@ When training plateaus, follow this checklist:
 | KL stop rate | ~99% | 99.5% | 48.0% | TBD |
 | Final entropy | ~7 | ~7.1 | 6.2 | TBD |
 | Pos error std | high | high | 0.0015m | TBD |
+
+---
+
+## 6. Research Direction v3.0 Updates
+
+*Updated 2026-03-31. This section records the strategic shift from the original v2.0 plan to the v3.0 research direction that this dev log now targets.*
+
+### 6.1 Why the Research Scope Expanded
+
+The original plan (v2.0) treated this project primarily as an implementation exercise: build the pipeline, evaluate, deploy. Version 3.0 repositions it as a targeted research contribution aimed at CoRL 2025 / ICRA 2026.
+
+The shift was driven by identifying three concrete gaps in existing work that this project is uniquely positioned to address:
+
+1. **Representation collapse in visual diffusion policies** — standard diffusion loss provides no incentive for discriminative visual features. D²PPO's Dispersive Loss directly addresses this.
+2. **Control frequency bottleneck** — 10-step DDIM at 12.5Hz is insufficient for aggressive quadrotor dynamics. OneDP single-step distillation targets 62Hz+.
+3. **Missing fair baselines** — prior work compared visual methods against state-based oracles. This plan adds BC-LSTM and VTD3 for fair comparison.
+
+### 6.2 Core Research Contribution (D²PPO)
+
+**Dispersive Loss** forces visual feature vectors within a mini-batch to repel each other:
+
+```python
+L_dispersive = -log(||h_i - h_j||) for all i≠j in batch
+L_total = L_diffusion + λ × L_dispersive   # λ = 0.1, tune 0.01~0.5
+```
+
+This prevents the encoder from mapping visually distinct flight states to identical embeddings, which would prevent the U-Net from generating appropriate corrective actions.
+
+**Ablation design (non-negotiable for publication):**
+- Baseline: no dispersive loss
+- Early layers only / late layers only / all layers
+- 3 seeds per condition
+
+### 6.3 Deployment Upgrade (OneDP)
+
+After D²PPO fine-tuning, distill the multi-step teacher into a 1-step student:
+
+```
+Teacher: D²PPO model (10-step DDIM, ~80ms latency)
+Student: 1-step model via KL minimization
+Target: <16ms inference, 62Hz+ control
+```
+
+Order is strict: poor teacher → poor student.
+
+### 6.4 Architecture Upgrade Path
+
+| Component | Current (v2.0) | Target (v3.0) |
+|-----------|----------------|----------------|
+| Vision encoder | 4-layer CNN | Pretrained ViT-Small |
+| Encoder training | End-to-end | Pre-trained + auxiliary decoder head |
+| Diffusion loss | Standard MSE | D²PPO (MSE + Dispersive) |
+| Inference | 10-step DDIM | 1-step OneDP |
+| Simulator | Custom Gymnasium | Flightmare (long-term) |
+
+**Immediate priority:** Complete Phase 1 (Run 4). Architecture upgrades don't matter if the expert fails to meet the quality gate.
+
+### 6.5 Conference Strategy
+
+| Venue | Acceptance | Primary Requirement | This Project's Focus |
+|-------|-----------|--------------------|--------------------|
+| CoRL 2025 | ~15% | Generative policy generalization, real robot verification | D²PPO theory, multimodal distribution necessity |
+| ICRA 2026 | ~40% | System integration, hardware experiments, closed-loop robustness | Real flight data, Jetson latency, wind disturbance |
+| RSS 2026 | ~12% | Algorithm depth, mathematical rigor | DPPO convergence proof, ablation, manifold analysis |
+
+**Strategy:** If time is tight, complete the D²PPO ablation for theoretical contribution and submit to CoRL. Hardware deployment is the ICRA complete version.
+
+### 6.6 What Has NOT Changed from v2.0
+
+- Core environment and dynamics (6-DOF, NED, RK4 @ 200Hz)
+- Observation space (15D), action space (4D)
+- Gaussian reward structure
+- PPO phase gate criteria (< 0.1m error prerequisite for Phase 2)
+- HDF5 data format, T_obs=2, T_pred=8
+- DDPM/DDIM diffusion process
+- Phase 4 RHC loop structure
+
+---
+
+## 7. Appendix: Hyperparameter Reference
