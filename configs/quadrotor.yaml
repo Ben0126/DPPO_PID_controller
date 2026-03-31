@@ -23,8 +23,8 @@ environment:
   max_episode_steps: 500          # 10 seconds at 50Hz
   position_bound: 5.0             # m (terminate if |pos| exceeds)
   max_tilt_deg: 60.0              # degrees (terminate if tilt exceeds)
-  initial_pos_range: 0.5          # m (random initial position spread)
-  initial_vel_range: 0.2          # m/s (random initial velocity spread)
+  initial_pos_range: 0.1          # m (narrowed for stable training, widen later)
+  initial_vel_range: 0.05         # m/s (narrowed for stable training, widen later)
   target_type: "hover"            # "hover" or "waypoint"
   waypoint_change_interval: 3.0   # seconds between waypoint changes
   waypoint_range: 2.0             # m (max waypoint distance from origin)
@@ -32,14 +32,14 @@ environment:
 # Reward Function Configuration (Gaussian style)
 reward:
   reward_type: "gaussian"
-  sigma_pos: 0.1                  # position error Gaussian width (tighter → demands precision)
+  sigma_pos: 0.10                 # position error Gaussian width (was 0.15: agent equilibrium at 0.104m)
   sigma_vel: 1.0                  # velocity Gaussian width
   sigma_ang: 1.0                  # angular velocity Gaussian width
-  w_pos: 0.8                     # position error weight (dominant signal)
-  w_vel: 0.1                     # velocity weight
-  w_ang: 0.1                     # angular velocity weight
-  w_action: 0.02                 # action penalty weight (reduced to not discourage correction)
-  alive_bonus: 0.05              # per-step survival bonus (reduced to not dominate)
+  w_pos: 0.65                    # position error weight (dominant signal)
+  w_vel: 0.2                     # velocity weight
+  w_ang: 0.2                     # angular velocity weight
+  w_action: 0.01                 # action penalty weight (was 0.03: fighting position precision at equilibrium)
+  alive_bonus: 0.0               # per-step survival bonus (was 0.05: free reward diluted position signal)
   crash_penalty: 10.0            # penalty for crash/termination
 
 # Disturbance Model

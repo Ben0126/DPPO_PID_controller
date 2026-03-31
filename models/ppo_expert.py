@@ -76,6 +76,11 @@ class Actor(nn.Module):
         self.mean_layer = nn.Linear(hidden_dim, action_dim)
         self.log_std_layer = nn.Linear(hidden_dim, action_dim)
 
+        # Initialize mean_layer bias to hover thrust:
+        # F_hover = mg/4 = 1.226N, action_hover = (1.226/4.0)*2 - 1 = -0.387
+        # tanh(x) ≈ x for small x, so pre-tanh bias ≈ -0.39
+        nn.init.constant_(self.mean_layer.bias, -0.39)
+
     def forward(self, state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.net(state)
         mean = self.mean_layer(x)
