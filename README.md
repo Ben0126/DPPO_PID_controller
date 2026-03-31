@@ -125,6 +125,9 @@ pip install -r requirements.txt
 # Install PyTorch with CUDA (recommended)
 # 安裝 PyTorch CUDA 版（建議）
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+pip install --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
 ```
 
 ### Training Pipeline / 訓練管線
