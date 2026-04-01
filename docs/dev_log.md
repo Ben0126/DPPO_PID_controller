@@ -266,23 +266,66 @@ With sigma=0.10, the reward at 0.1m is only 37% of perfect (vs 62% with sigma=0.
 | w_action | 0.03 | **0.01** | Remove action penalty as obstacle to precision |
 | alive_bonus | 0.05 | **0.0** | Remove free reward; agent must earn from position |
 
-**Status:** Training in progress (3M steps).
+**Training Setup:**
+- Vectorized: 16 parallel `AsyncVectorEnv` (multiprocessing), RTX 3090 GPU (`cuda:0`)
+- Transitions per PPO update: 65,536 (4,096 × 16 envs)
+- Total PPO updates: ~46 (vs 732 in single-env runs)
+- Estimated training time: ~15–20 minutes (vs ~35–50 min for single-env CPU)
 
-**Expected Outcomes:**
-- Reward equilibrium should shift below 0.05m position error
-- Z-axis error should decrease significantly
-- Episodes < 0.1m target: > 40/50
+**Results:**
+- Best eval reward: **494.39** at step 2,555,904
+- Final eval reward: 493.20 (stable, no degradation at end)
+- 0 crashes observed throughout training
+- Rapid improvement phase: step 720K–983K (reward 29 → 410, nearly linear ascent)
+- Plateau onset: ~step 1.3M onward (mean ~400–413, eval ~471–494)
+
+**Reward Curve:**
+| Step | Mean Reward (100) | Eval Reward |
+|------|-------------------|-------------|
+| 65K | -1.87 | 6.20 |
+| 720K | 29.85 | 37.74 |
+| 917K | 139.37 | 355.93 |
+| 1,048K | 357.59 | 448.59 |
+| 1,179K | 395.28 | 465.87 |
+| 1,507K | 409.02 | **479.86** |
+| 2,555K | 407.33 | **494.39** ← best |
+| 3,014K | 406.92 | 493.20 |
+
+**Cross-run reward normalization:** Run 4 removed `alive_bonus=0.05`. Over 500 steps this subtracts 25 points from maximum episode reward. Adjusted comparison:
+
+| Run | Best Eval | Alive Bonus (500 steps) | Adjusted Reward |
+|-----|-----------|------------------------|-----------------|
+| Run 3 | 502.70 | +25.0 | **477.70** |
+| Run 4 | 494.39 | +0.0 | **494.39** |
+
+Run 4 outperforms Run 3 by **+16.7 points** on an equivalent basis. Furthermore, Run 4 uses sigma_pos=0.10 (vs 0.15 in Run 3), meaning the same reward level corresponds to tighter position tracking. Absolute reward numbers are not comparable across runs with structural reward changes.
+
+**Problem Analysis:**
+
+#### Problem 7: Value Loss Divergence (Critic Underfitting at Scale)
+Value Loss increased monotonically from 22.78 → 81.37 throughout training, never converging. This mirrors Run 3 (stuck at 60–110) but with a lower starting point.
+
+**Root Cause:** With 16 parallel environments, each PPO update trains on 65,536 transitions covering far more state diversity than single-env 4,096-step rollouts. The critic (256-dim, 2-layer MLP) does not have sufficient capacity to fit the return function across this expanded state distribution. The current `vf_coef=1.5` is insufficient to compensate.
+
+**Impact on Training:** Noisy advantage estimates from the underfitting critic slow convergence and likely explain the plateau at ~494. The policy plateau does NOT indicate reward equilibrium (unlike Run 3's 0.0015m std) because the critic's poor return estimates mean GAE advantages are inaccurate.
+
+**Proposed Fix (Run 5 if needed):**
+| Parameter | Current | Proposed | Reason |
+|-----------|---------|----------|--------|
+| hidden_dim | 256 | **512** | Wider critic to handle larger state diversity |
+| vf_coef | 1.5 | **2.0** | More gradient weight on value function |
+| Or: separate critic LR | — | **3× actor LR** | Allow critic to train faster independently |
+
+**Phase gate assessment:** Detailed evaluation with per-axis error breakdown required to confirm position error < 0.1m. Run an explicit eval script with 50 episodes before proceeding to Phase 2.
 
 **Phase gate to proceed to Phase 2:**
 
-| Metric | Target | Why This Threshold |
-|--------|--------|--------------------|
-| Mean position error | < 0.10m | Expert quality ceiling for imitation learning |
-| Episodes < 0.1m | > 40/50 | Consistency, not just mean |
-| Z-axis error | < 0.05m | Vertical axis is current bottleneck |
-| Crash rate | 0 | Safety prerequisite |
-
-*Results will be updated after training completes.*
+| Metric | Target | Run 4 Status |
+|--------|--------|--------------|
+| Mean position error | < 0.10m | Needs eval — reward level suggests likely met |
+| Episodes < 0.1m | > 40/50 | Needs eval |
+| Z-axis error | < 0.05m | Needs eval |
+| Crash rate | 0 | MET (0 crashes during training) |
 
 ---
 
@@ -315,13 +358,29 @@ An early attempt was made to proceed through the full pipeline before the PPO ex
 **Symptom:** `venv\Scripts\Activate.ps1` failed with execution policy error.
 **Fix:** Use Git Bash, or run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` in PowerShell.
 
-### Issue: PyTorch Not Detecting GPU
-**Symptom:** `torch.cuda.is_available()` returned `False` despite NVIDIA GTX 1650 being present.
-**Root Cause:** PyTorch installed with wrong CUDA version (cu128 for a card that needed cu124, or CPU-only build).
-**Fix:** Reinstall with correct CUDA version:
+### Issue: PyTorch Not Detecting GPU (RTX 3090 / CUDA 12.9)
+**Symptom:** `torch.cuda.is_available()` returned `False` despite RTX 3090 + CUDA 12.9 being present. Training ran on CPU and printed `Device: cpu`.
+**Root Cause:** `pip install torch` (without an `--index-url`) always installs the CPU-only wheel from PyPI (`torch 2.8.0+cpu`). PyTorch CUDA wheels are hosted on a separate index and are not installed by default.
+**Diagnosis:** `python -c "import torch; print(torch.__version__)"` → `2.8.0+cpu`
+**Fix:** Reinstall from PyTorch's CUDA wheel index:
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+pip uninstall torch torchvision torchaudio -y
+pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu128
 ```
+PyTorch cu128 is compatible with CUDA 12.8 and 12.9. Also updated `requirements.txt` to include `--extra-index-url` so future installs automatically pick the correct wheel.
+
+### Issue: AsyncVectorEnv Requires Picklable Env Factories (Windows)
+**Symptom:** `AsyncVectorEnv` fails with pickling errors when using lambda or inner-function env factories.
+**Root Cause:** Windows uses the `spawn` multiprocessing start method (unlike Linux's `fork`). The `spawn` method requires all objects passed to worker processes — including env factory functions — to be picklable. Lambda functions and closures are not picklable.
+**Fix:** Replace lambda/closure factories with a picklable callable class:
+```python
+class _EnvFactory:
+    def __init__(self, config_path: str):
+        self.config_path = os.path.abspath(config_path)
+    def __call__(self) -> QuadrotorEnv:
+        return QuadrotorEnv(config_path=self.config_path)
+```
+Also resolves the config path to absolute before passing to workers, since worker processes may have a different working directory.
 
 ---
 
@@ -365,6 +424,17 @@ When training plateaus, follow this checklist:
 3. **Check entropy trend** — should decrease; rising = policy can't converge
 4. **Check value loss trend** — should decrease; flat/rising = critic underfitting
 5. **Run evaluation with per-axis error breakdown** — identify which axis is the bottleneck
+
+### 5.7 Reward Comparison Across Runs
+
+- **Never compare absolute rewards across runs with structural reward changes.** Removing `alive_bonus` subtracts `bonus × max_steps` from every episode's ceiling. Tightening `sigma_pos` changes what position accuracy is needed to achieve the same per-step reward. Before concluding a run is "worse", adjust for these structural differences.
+- **Formula:** adjusted_reward = raw_reward − alive_bonus × max_episode_steps. Compare only adjusted rewards when alive_bonus changed between runs.
+
+### 5.8 Critic Capacity and Large Batch Sizes
+
+- **Vectorized environments dramatically increase state diversity per PPO update.** A single-env 4096-step rollout samples a narrow trajectory; 16-env × 4096 samples 65,536 transitions covering much broader state space. A critic that converges with a single env may diverge (value loss rising monotonically) with 16 envs.
+- **Symptom:** Value loss starts lower but rises continuously rather than converging. Unlike KL-choked critic (Run 2–3 pattern), this is a capacity issue, not a training speed issue.
+- **Fix options:** (1) widen critic hidden_dim, (2) raise vf_coef further, (3) give critic a separate higher learning rate, (4) reduce n_envs if not enough GPU memory for larger critic.
 
 ---
 
@@ -411,14 +481,22 @@ When training plateaus, follow this checklist:
 
 | Metric | Run 1 | Run 2 | Run 3 | Run 4 |
 |--------|-------|-------|-------|-------|
-| Best eval reward | ~380 | 426.45 | 502.70 | TBD |
-| Mean position error | 0.264m | 0.0993m | 0.1041m | TBD |
-| Episodes < 0.1m (of 50) | 0 | 25 | 0 | TBD |
-| Z-axis error | ~0.27m | 0.0934m | 0.0876m | TBD |
-| Crash rate | 0% | 0% | 0% | TBD |
-| KL stop rate | ~99% | 99.5% | 48.0% | TBD |
-| Final entropy | ~7 | ~7.1 | 6.2 | TBD |
-| Pos error std | high | high | 0.0015m | TBD |
+| Best eval reward (raw) | ~380 | 426.45 | 502.70 | **494.39** |
+| Best eval reward (adjusted¹) | ~355 | ~401 | **477.70** | **494.39** |
+| Mean position error | 0.264m | 0.0993m | 0.1041m | Needs eval |
+| Episodes < 0.1m (of 50) | 0 | 25 | 0 | Needs eval |
+| Z-axis error | ~0.27m | 0.0934m | 0.0876m | Needs eval |
+| Crash rate | 0% | 0% | 0% | 0% |
+| KL stop rate | ~99% | 99.5% | 48.0% | N/A² |
+| Final entropy | ~7 | ~7.1 | 6.2 | N/A² |
+| Value loss (final) | — | high | 60–110 | ~81 (rising) |
+| Pos error std | high | high | 0.0015m | Needs eval |
+| Envs (parallel) | 1 | 1 | 1 | **16** |
+| Device | CPU | CPU | CPU | **RTX 3090** |
+| Est. training time | ~40 min | ~40 min | ~40 min | **~15–20 min** |
+
+¹ Adjusted = raw − alive_bonus × max_episode_steps. Run 1–3: alive_bonus=0.1/0.05 × 500 steps. Run 4: alive_bonus=0.  
+² KL/entropy not logged in vectorized run; would require adding TensorBoard tracking.
 
 ---
 

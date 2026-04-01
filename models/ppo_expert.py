@@ -171,6 +171,38 @@ class PPOExpert:
         )
 
     @torch.no_grad()
+    def get_action_vec(self, states: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Batch action sampling for vectorized environments.
+
+        Args:
+            states: (n_envs, state_dim) normalized observations
+
+        Returns:
+            actions: (n_envs, action_dim)
+            log_probs: (n_envs,)
+            values: (n_envs,)
+        """
+        states_t = torch.FloatTensor(states).to(device)
+        mean, log_std = self.actor(states_t)
+        std = log_std.exp()
+
+        dist = Normal(mean, std)
+        z = dist.rsample()
+        actions_tanh = torch.tanh(z)
+
+        log_prob = dist.log_prob(z).sum(dim=-1)
+        log_prob -= torch.log(1 - actions_tanh.pow(2) + 1e-6).sum(dim=-1)
+
+        values = self.critic(states_t).squeeze(-1)
+
+        return (
+            actions_tanh.cpu().numpy(),
+            log_prob.cpu().numpy(),
+            values.cpu().numpy(),
+        )
+
+    @torch.no_grad()
     def get_action_deterministic(self, state: np.ndarray) -> np.ndarray:
         """Get deterministic action (mean of policy). Used for evaluation/data collection."""
         state_t = torch.FloatTensor(state).unsqueeze(0).to(device)
@@ -226,7 +258,9 @@ class PPOExpert:
 
     def update(self, memory: Dict,
                last_value: float = 0.0,
-               target_kl: float = None) -> Dict[str, float]:
+               target_kl: float = None,
+               precomputed_advantages: np.ndarray = None,
+               precomputed_returns: np.ndarray = None) -> Dict[str, float]:
         """
         Perform PPO update on collected trajectories.
 
@@ -237,15 +271,21 @@ class PPOExpert:
                         0.0 if the last step was terminal, else V(s_{T+1}).
             target_kl: if set, stop epoch early when mean approx KL exceeds
                        this threshold (prevents policy churn).
+            precomputed_advantages: (N,) pre-computed advantages (skips GAE).
+            precomputed_returns: (N,) pre-computed returns (skips GAE).
 
         Returns:
             metrics: dict with training loss metrics
         """
-        # Compute GAE with correct bootstrap
-        advantages, returns = self.compute_gae(
-            memory['rewards'], memory['values'], memory['dones'],
-            last_value=last_value,
-        )
+        # Compute GAE or use pre-computed values (vectorized env path)
+        if precomputed_advantages is not None:
+            advantages = precomputed_advantages.tolist()
+            returns = precomputed_returns.tolist()
+        else:
+            advantages, returns = self.compute_gae(
+                memory['rewards'], memory['values'], memory['dones'],
+                last_value=last_value,
+            )
 
         # Convert to tensors
         states = torch.FloatTensor(np.array(memory['states'])).to(device)
