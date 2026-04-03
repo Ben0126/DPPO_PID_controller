@@ -107,6 +107,7 @@ class QuadrotorEnv(gym.Env):
         self.position_bound = e['position_bound']
         self.max_tilt_deg = e['max_tilt_deg']
         self.initial_pos_range = e['initial_pos_range']
+        self.initial_z_range = e.get('initial_z_range', 0.0)  # fallback: 0 = target_z == init_z (original behaviour)
         self.initial_vel_range = e['initial_vel_range']
         self.target_type = e['target_type']
         self.waypoint_change_interval = e.get('waypoint_change_interval', 3.0)
@@ -114,9 +115,11 @@ class QuadrotorEnv(gym.Env):
 
         r = self.config['reward']
         self.sigma_pos = r['sigma_pos']
+        self.sigma_z = r.get('sigma_z', r['sigma_pos'])  # fallback: same as sigma_pos
         self.sigma_vel = r['sigma_vel']
         self.sigma_ang = r['sigma_ang']
         self.w_pos = r['w_pos']
+        self.w_z = r.get('w_z', 0.0)                     # fallback: 0 (backward-compatible)
         self.w_vel = r['w_vel']
         self.w_ang = r['w_ang']
         self.w_action = r['w_action']
@@ -150,7 +153,11 @@ class QuadrotorEnv(gym.Env):
         # Set target
         if self.target_type == "hover":
             self.target_position = init_pos.copy()
-            self.target_position[2] = init_pos[2]  # hover at initial altitude
+            # Add Z offset between drone start and target to force altitude correction.
+            # initial_z_range controls how far above/below the target the drone starts.
+            # In NED, negative Z = higher altitude, so subtract z_offset to place target higher.
+            z_offset = self.np_random.uniform(-self.initial_z_range, self.initial_z_range)
+            self.target_position[2] = init_pos[2] - z_offset  # target Z: displaced from start
         else:
             self._generate_new_waypoint()
 
@@ -258,22 +265,30 @@ class QuadrotorEnv(gym.Env):
 
     def _calculate_reward(self, thrust_cmd: np.ndarray) -> float:
         """
-        Gaussian reward function for position tracking and stabilization.
+        Anisotropic Gaussian reward for position tracking and stabilization.
 
-        r = w_pos * exp(-||pos_err||^2 / sigma_pos)
+        r = w_pos * exp(-(ex^2 + ey^2) / sigma_pos)   # X/Y horizontal
+          + w_z   * exp(-ez^2 / sigma_z)               # Z altitude (tighter sigma)
           + w_vel * exp(-||vel||^2 / sigma_vel)
           + w_ang * exp(-||ang_vel||^2 / sigma_ang)
           - w_action * ||action_normalized||^2
           + alive_bonus
+
+        Separating Z from X/Y allows sigma_z to be tighter than sigma_pos,
+        applying stronger gradient pressure on altitude without disturbing the
+        already-converged horizontal tracking.
         """
         pos_error = self.target_position - self.dynamics.position
         vel = self.dynamics.velocity
         omega = self.dynamics.ang_velocity
 
-        # Gaussian components
-        pos_reward = self.w_pos * np.exp(
-            -np.sum(pos_error**2) / self.sigma_pos
-        )
+        # Horizontal (X/Y) reward
+        xy_sq = pos_error[0]**2 + pos_error[1]**2
+        pos_reward = self.w_pos * np.exp(-xy_sq / self.sigma_pos)
+
+        # Vertical (Z) reward — dedicated term with tighter sigma
+        z_reward = self.w_z * np.exp(-pos_error[2]**2 / self.sigma_z)
+
         vel_reward = self.w_vel * np.exp(
             -np.sum(vel**2) / self.sigma_vel
         )
@@ -281,11 +296,14 @@ class QuadrotorEnv(gym.Env):
             -np.sum(omega**2) / self.sigma_ang
         )
 
-        # Action penalty (normalized by max thrust)
-        action_normalized = thrust_cmd / self.motor_max_thrust
-        action_penalty = self.w_action * np.sum(action_normalized**2)
+        # Action penalty: penalize deviation from hover thrust, not absolute thrust.
+        # Old: w_action * sum((thrust/f_max)^2)  — penalizes the drone for simply staying airborne
+        # New: w_action * sum(((thrust - hover)/f_max)^2) — cost = 0 at perfect hover, penalizes corrections
+        hover_norm = self.hover_thrust / self.motor_max_thrust
+        action_dev = thrust_cmd / self.motor_max_thrust - hover_norm
+        action_penalty = self.w_action * np.sum(action_dev**2)
 
-        return pos_reward + vel_reward + ang_reward - action_penalty + self.alive_bonus
+        return pos_reward + z_reward + vel_reward + ang_reward - action_penalty + self.alive_bonus
 
     def _check_termination(self) -> bool:
         """Check if episode should terminate early."""

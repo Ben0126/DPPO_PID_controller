@@ -43,14 +43,14 @@ training:
 # DPPO fine-tuning (Phase 3b)
 dppo:
   enabled: false                  # set true for RL fine-tuning
-  advantage_beta: 1.0             # advantage weighting coefficient
+  advantage_beta: 0.1             # Run2: reduced from 1.0 → prevents policy collapse from noisy early advantages
   gamma: 0.99
   gae_lambda: 0.95
-  n_rollout_steps: 2048
-  n_epochs: 5
-  learning_rate: 0.00003          # 3e-5 (lower for fine-tuning)
+  n_rollout_steps: 4096           # Run2: doubled → more stable advantage estimates per update
+  n_epochs: 3                     # Run2: reduced from 5 → less aggressive per-update change
+  learning_rate: 0.000005         # Run2: 5e-6 (was 3e-5) → conservative fine-tuning
   value_hidden_dim: 256
-  value_lr: 0.001
+  value_lr: 0.0003                # Run2: reduced from 1e-3
 
 # Logging
 logging:

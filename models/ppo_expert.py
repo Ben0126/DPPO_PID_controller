@@ -115,17 +115,22 @@ class PPOExpert:
     """
 
     def __init__(self, state_dim: int = 15, action_dim: int = 4,
-                 hidden_dim: int = 256, lr: float = 3e-4,
+                 hidden_dim: int = 256, critic_hidden_dim: int = None,
+                 lr: float = 3e-4, critic_lr_multiplier: float = 1.0,
                  gamma: float = 0.99, gae_lambda: float = 0.95,
                  clip_range: float = 0.2, ent_coef: float = 0.01,
                  vf_coef: float = 0.5, max_grad_norm: float = 0.5,
                  batch_size: int = 256, n_epochs: int = 10):
+        # critic_hidden_dim defaults to hidden_dim if not specified
+        if critic_hidden_dim is None:
+            critic_hidden_dim = hidden_dim
+
         self.actor = Actor(state_dim, action_dim, hidden_dim).to(device)
-        self.critic = Critic(state_dim, hidden_dim).to(device)
+        self.critic = Critic(state_dim, critic_hidden_dim).to(device)
 
         self.optimizer = optim.Adam([
             {'params': self.actor.parameters(), 'lr': lr},
-            {'params': self.critic.parameters(), 'lr': lr},
+            {'params': self.critic.parameters(), 'lr': lr * critic_lr_multiplier},
         ])
 
         self.gamma = gamma

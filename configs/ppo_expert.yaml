@@ -12,12 +12,14 @@ training:
   clip_range_end: 0.05           # final clip range at end of training
   n_epochs: 10                   # optimization epochs per update (KL guard prevents overtraining)
   ent_coef: 0.001                # entropy coefficient (reduced: entropy was rising to 7.1, need tighter policy)
-  vf_coef: 1.5                   # value function loss coefficient (increased: VL stuck at 60-110)
+  vf_coef: 1.5                   # value function loss coefficient
   max_grad_norm: 0.5             # gradient clipping
-  target_kl: 0.04                # KL early stopping threshold (was 0.01: 99.5% updates truncated)
+  target_kl: 0.04                # KL early stopping threshold
+  critic_lr_multiplier: 3.0      # critic LR = actor LR × 3 (helps critic converge faster)
 
 network:
-  hidden_dim: 256                # hidden layer size
+  hidden_dim: 256                # actor hidden layer size
+  critic_hidden_dim: 256         # critic hidden layer size (512 tested in Run 8: no VL improvement)
   num_layers: 2                  # number of hidden layers
   activation: "tanh"             # activation function
 
