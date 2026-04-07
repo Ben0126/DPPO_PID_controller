@@ -45,6 +45,18 @@ reward:
   alive_bonus: 0.0               # per-step survival bonus
   crash_penalty: 10.0            # penalty for crash/termination
 
+# Domain Randomization (Option A — Renderer-level)
+# Applied per-episode in QuadrotorVisualEnv.reset() when dr_enabled=True (default).
+# Does not affect PPO expert actions (expert uses full state, not images).
+domain_randomization:
+  enabled: true
+  sky_color_range: 40             # ±offset added to R/G/B base values of sky gradient
+  ground_color_range: 40          # ±offset added to R/G/B base values of ground gradient
+  brightness_range: [0.7, 1.3]    # per-episode global brightness multiplier
+  focal_scale_range: [0.30, 0.50] # per-episode projection focal scale (≈±20% FOV)
+  crosshair_size_delta: 2         # ±px perturbation on crosshair arm length
+  per_frame_noise_sigma: 5        # Gaussian pixel noise σ (applied every frame)
+
 # Disturbance Model
 disturbance:
   enabled: true

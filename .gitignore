@@ -37,11 +37,15 @@ evaluation_results/
 # Data files (re-generate with collect_data.py)
 data/*.h5
 data/*.pkl
+data/v31_mmap/
 
 # Media / artifacts
 *.png
 *.pkl
 *.zip
+
+# Claude Code auto-generated cache
+dppo_status.json
 
 # OS
 .DS_Store

@@ -5,8 +5,15 @@ Rolls out a trained PPO expert in the visual environment and saves
 (image, action, state) trajectories to HDF5 for Diffusion Policy training.
 
 Usage:
+    # Standard collection (Phase 2 baseline):
     python -m scripts.collect_data --model checkpoints/ppo_expert/.../best_model.pt \
                                    --norm checkpoints/ppo_expert/.../best_obs_rms.npz
+
+    # v3.1 collection (adds imu_data + depth_maps for Architecture v3.1):
+    python -m scripts.collect_data --model checkpoints/ppo_expert/.../best_model.pt \
+                                   --norm checkpoints/ppo_expert/.../best_obs_rms.npz \
+                                   --output data/expert_demos_v31.h5 \
+                                   --v31
 """
 
 import os
@@ -30,6 +37,11 @@ def collect_data(args):
 
     state_dim = base_env.observation_space.shape[0]
     action_dim = base_env.action_space.shape[0]
+
+    dt = 1.0 / 50.0  # 50 Hz control loop
+
+    if args.v31:
+        print("v3.1 mode: saving imu_data (6D) + depth_maps (1×64×64)")
 
     # Load PPO expert
     agent = PPOExpert(state_dim=state_dim, action_dim=action_dim,
@@ -60,6 +72,9 @@ def collect_data(args):
             images = []
             actions = []
             states = []
+            imu_data_ep   = []   # v3.1 only
+            depth_maps_ep = []   # v3.1 only
+            prev_v_body   = None # for finite-difference acceleration
             done = False
 
             while not done:
@@ -69,6 +84,21 @@ def collect_data(args):
                 images.append(obs['image'])
                 actions.append(action)
                 states.append(obs['state'])
+
+                # v3.1: capture IMU and depth before stepping
+                if args.v31:
+                    # Angular velocity: state[12:15] (body frame)
+                    omega = obs['state'][12:15].copy()
+                    # Linear velocity in body frame: state[9:12]
+                    v_body = obs['state'][9:12].copy()
+                    if prev_v_body is None:
+                        accel = np.zeros(3, dtype=np.float32)
+                    else:
+                        accel = ((v_body - prev_v_body) / dt).astype(np.float32)
+                    prev_v_body = v_body
+                    imu_data_ep.append(
+                        np.concatenate([omega, accel]).astype(np.float32))  # (6,)
+                    depth_maps_ep.append(env._render_depth())               # (1,H,W)
 
                 obs, reward, terminated, truncated, info = env.step(action)
                 state_norm = obs_rms.normalize(obs['state'])
@@ -81,6 +111,13 @@ def collect_data(args):
             ep_grp.create_dataset('actions', data=np.array(actions, dtype=np.float32))
             ep_grp.create_dataset('states', data=np.array(states, dtype=np.float32))
 
+            if args.v31:
+                ep_grp.create_dataset('imu_data',
+                    data=np.array(imu_data_ep, dtype=np.float32))       # (T, 6)
+                ep_grp.create_dataset('depth_maps',
+                    data=np.array(depth_maps_ep, dtype=np.uint8),
+                    compression='gzip', compression_opts=4)              # (T, 1, H, W)
+
             total_steps += len(actions)
 
         # Save metadata
@@ -89,10 +126,12 @@ def collect_data(args):
         hf.attrs['image_size'] = args.image_size
         hf.attrs['state_dim'] = state_dim
         hf.attrs['action_dim'] = action_dim
+        hf.attrs['v31'] = args.v31
 
     print(f"\nData collection complete!")
     print(f"  Episodes: {args.n_episodes}")
     print(f"  Total steps: {total_steps:,}")
+    print(f"  v3.1 fields: {'imu_data + depth_maps' if args.v31 else 'disabled'}")
     print(f"  Saved to: {args.output}")
 
 
@@ -107,5 +146,7 @@ if __name__ == "__main__":
     parser.add_argument('--n-episodes', type=int, default=1000)
     parser.add_argument('--image-size', type=int, default=64)
     parser.add_argument('--hidden-dim', type=int, default=256)
+    parser.add_argument('--v31', action='store_true',
+                        help='Enable v3.1 format: save imu_data (6D) + depth_maps (1×H×W)')
     args = parser.parse_args()
     collect_data(args)

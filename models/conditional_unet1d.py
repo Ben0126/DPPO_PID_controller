@@ -231,9 +231,11 @@ class ConditionalUnet1d(nn.Module):
             h = upsample(h)
             skip = skips.pop()
 
-            # Handle size mismatch from downsampling/upsampling
+            # Handle size mismatch from downsampling/upsampling (both directions)
             if h.shape[-1] != skip.shape[-1]:
-                h = F.pad(h, (0, skip.shape[-1] - h.shape[-1]))
+                min_len = min(h.shape[-1], skip.shape[-1])
+                h = h[..., :min_len]
+                skip = skip[..., :min_len]
 
             h = torch.cat([h, skip], dim=1)
             h = dec_block(h, cond)

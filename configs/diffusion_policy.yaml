@@ -38,19 +38,19 @@ training:
   lr_scheduler: "cosine"          # cosine annealing
   warmup_epochs: 10
   grad_clip: 1.0
-  dataset_path: "data/expert_demos.h5"
+  dataset_path: "data/expert_demos_dr.h5"  # DR-enabled data (re-collected 2026-04-04)
 
 # DPPO fine-tuning (Phase 3b)
 dppo:
   enabled: false                  # set true for RL fine-tuning
-  advantage_beta: 0.1             # Run2: reduced from 1.0 → prevents policy collapse from noisy early advantages
+  advantage_beta: 0.15            # Run3: 0.1→0.15 (max weight ~1.57×) — stronger signal from DR-trained encoder
   gamma: 0.99
   gae_lambda: 0.95
-  n_rollout_steps: 4096           # Run2: doubled → more stable advantage estimates per update
-  n_epochs: 3                     # Run2: reduced from 5 → less aggressive per-update change
-  learning_rate: 0.000005         # Run2: 5e-6 (was 3e-5) → conservative fine-tuning
+  n_rollout_steps: 4096           # unchanged — stable advantage estimates
+  n_epochs: 3                     # unchanged — conservative per-update change
+  learning_rate: 0.000005         # unchanged — 5e-6 conservative fine-tuning
   value_hidden_dim: 256
-  value_lr: 0.0003                # Run2: reduced from 1e-3
+  value_lr: 0.0003                # unchanged
 
 # Logging
 logging:
@@ -58,3 +58,27 @@ logging:
   save_path: "./checkpoints/diffusion_policy/"
   checkpoint_freq: 50             # save every N epochs
   log_freq: 10                    # log metrics every N batches
+
+# Architecture v3.1 — IMU Late Fusion + FCN Auxiliary Depth
+# Implement after Phase 3a Re-run 2 completes.
+# Scripts: train_diffusion_v31.py (Phase 3a v3.1) + train_dppo_v31.py (Phase 3c)
+# Data:    collect_data.py --v31  →  data/expert_demos_v31.h5
+v31:
+  # IMU encoder
+  imu_feature_dim: 32            # IMU MLP output dim: Linear(6→64→32)
+  global_cond_dim: 288           # vision(256) + imu(32) fed into UNet
+
+  # Loss weights
+  lambda_dispersive: 0.1         # dispersive loss (feature repulsion)
+  lambda_depth: 0.1              # FCN depth auxiliary loss; set 0.0 to disable
+
+  # Depth normalisation
+  depth_max_m: 10.0              # depth value mapped to 255 (uint8 GT)
+
+  # Dataset (v3.1 format with imu_data + depth_maps)
+  dataset_path_v31: "data/expert_demos_v31.h5"
+
+  # Ablation variants (set lambda=0 to disable each branch)
+  # No IMU:   imu_feature_dim irrelevant (remove imu_encoder from model init)
+  # No depth: lambda_depth: 0.0
+  # Full v3.1: both enabled (default above)

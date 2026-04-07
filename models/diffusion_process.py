@@ -156,13 +156,10 @@ class DiffusionProcess:
             action_t - beta / sqrt_one_minus_alpha_cumprod * predicted_noise
         )
 
-        # Add noise (except at t=0)
-        if t[0] > 0:
-            posterior_var = self._extract(self.posterior_variance, t, action_t.shape)
-            noise = torch.randn_like(action_t)
-            return model_mean + torch.sqrt(posterior_var) * noise
-        else:
-            return model_mean
+        # Add noise (except at t=0) — per-element mask handles heterogeneous batches
+        posterior_var = self._extract(self.posterior_variance, t, action_t.shape)
+        noise_mask = (t > 0).float().reshape(t.shape[0], *([1] * (action_t.dim() - 1)))
+        return model_mean + noise_mask * torch.sqrt(posterior_var) * torch.randn_like(action_t)
 
     @torch.no_grad()
     def ddpm_sample(self, denoise_fn, condition: torch.Tensor,

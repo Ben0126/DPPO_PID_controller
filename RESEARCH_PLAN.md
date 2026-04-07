@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.0
-**Date:** 2026-03-31
-**Status:** Phase 1c — PPO Expert tuning (Run 4 in progress)
+**Version:** 3.4
+**Date:** 2026-04-08
+**Status:** Phase 3c DPPO v3.1 in progress (`train_dppo_v31_20260408_024533`); v3.1 data + supervised pre-training complete; baseline DPPO ceiling confirmed at RMSE 0.145m
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -26,15 +26,16 @@
 **Research Pipeline:**
 
 ```
-Phase 1: 6-DOF Env + PPO Expert   ← CURRENT (Run 4 in progress)
-    ↓ Gate: position error < 0.1m, crash rate = 0
-Phase 2: FPV Data Collection
+Phase 1: 6-DOF Env + PPO Expert   ✓ DONE (Run 6: RMSE 0.069m, 0 crashes)
     ↓
-Phase 3a: CNN Baseline Diffusion Policy (supervised pre-training)
-    ↓
-Phase 3b: D²PPO Dispersive Loss (core contribution, ablation required)
-    ↓
-Phase 3c: DPPO Closed-Loop RL Fine-tuning
+Phase 2: FPV Data Collection       ✓ DONE (expert_demos_dr.h5: 1000 ep, 500k steps, DR A+B)
+    ↓                              ✓ v3.1 re-collect DONE (expert_demos_v31.h5: 4.04GB, IMU+depth)
+Phase 3a: CNN Baseline             ✓ Re-run 2 complete (20260405_044808, best loss converged)
+    ↓      v3.1 supervised         ✓ DONE (v31_20260406_185128, best loss -1.4415, 500 epochs)
+Phase 3b: D²PPO Dispersive Loss    ✓ Run 2 (u11, 0.145m) + Run 3 (u34, 0.450m) — both 50/50 crashes
+    ↓       Root cause: value net lag; policy collapses before advantage estimates converge
+Phase 3c: DPPO v3.1 RL Fine-tuning   🔄 IN PROGRESS (train_dppo_v31_20260408_024533)
+    ↓       Initial reward +0.631/step — best of all DPPO runs; value loss converging fast
     ↓
 Phase 3d: OneDP Single-Step Distillation
     ↓
@@ -181,7 +182,22 @@ Wraps `QuadrotorEnv`, renders synthetic FPV images (64×64 RGB):
 - Target crosshair (relative position projection)
 - Altitude indicator
 
-**Sim-to-Real gap note:** Current renderer lacks motion blur, lens distortion, sensor noise. This is the primary risk factor for Phase 5. Upgrade path: Flightmare + domain randomization.
+**Domain Randomization (Option A — Renderer-level):**
+
+Applied at each `env.reset()` call so every episode has a distinct visual appearance.
+Expert uses full state for action decisions, so DR does not affect action quality.
+
+| Param | Range | Granularity | Effect |
+|-------|-------|-------------|--------|
+| Sky base color offset | ±40 per R/G/B | per-episode | Prevents CNN from encoding sky hue as attitude |
+| Ground base color offset | ±40 per R/G/B | per-episode | Same for ground |
+| Global brightness | ×[0.7, 1.3] | per-episode | Simulates lighting variation |
+| Focal scale (projection) | [0.30, 0.50] | per-episode | ≈ ±20% FOV variation |
+| Crosshair size delta | ±2 px | per-episode | Distance-estimation robustness |
+| Horizon color | [150, 255] per ch | per-episode | Prevents color-based horizon detection |
+| Gaussian pixel noise | σ = 5 (uint8) | per-frame | Prevents encoder over-fitting to clean edges |
+
+**Sim-to-Real gap note:** Motion blur, lens distortion, and shadow simulation are deferred to Phase 5 (Flightmare + domain randomization). Current DR addresses the highest-ROI factors.
 
 ### 2.2 HDF5 Dataset Format
 
@@ -195,10 +211,40 @@ data/expert_demos.h5
 
 Sliding window: T_obs=2 frames (stacked as 6 channels) → T_pred=8 action steps
 
+**DR-enabled collection:** Phase 2 must be re-run with `QuadrotorVisualEnv(dr_enabled=True)`
+(the default) to ensure collected images span the full randomization distribution.
+Existing `data/expert_demos.h5` (no DR) is kept as a deterministic baseline for ablation.
+
 **Data quality gates (check before collecting):**
-1. Visually inspect 10 random episodes for FPV rendering sanity
+1. Visually inspect 10 random episodes for FPV rendering sanity — confirm color variation across episodes
 2. Confirm no action discontinuities: |action[t] - action[t-1]| < 0.5
 3. Confirm episode mean position error < 0.1m (expert quality ceiling)
+4. Confirm mean pixel diff across consecutive episodes > 10 (DR sanity check)
+
+### 2.3 Data Collection Upgrade (v3.1)
+
+Required before Phase 3c (Architecture v3.1 with IMU Late Fusion & Auxiliary Depth).
+Not needed for the current Phase 3b run.
+
+**New HDF5 fields:**
+
+```
+data/expert_demos_v31.h5
+  /episode_0/images:      (T, 3, 64, 64) uint8    — unchanged
+  /episode_0/actions:     (T, 4) float32           — unchanged
+  /episode_0/states:      (T, 15) float32          — unchanged
+  /episode_0/imu_data:    (T, 6) float32           — NEW: [ωx, ωy, ωz, ax, ay, az]
+  /episode_0/depth_maps:  (T, 1, 64, 64) uint8     — NEW (optional, FCN branch only)
+```
+
+**IMU alignment:** Control loop runs at 50 Hz; IMU data is aligned at the same rate.
+- **ω (gyro):** state[12:14] (angular velocity, already available in state vector)
+- **a (accel):** computed via first-order finite difference of linear velocity, or directly from
+  the quadrotor dynamics model (`QuadrotorDynamics.step()` returns body-frame acceleration)
+
+**Depth map rendering:** requires `QuadrotorVisualEnv` modification to output a per-pixel depth
+channel alongside the RGB image. In the synthetic environment depth can be derived analytically
+from the target position and camera projection parameters — no neural estimation needed.
 
 ---
 
@@ -234,6 +280,20 @@ Output:  predicted noise ε_θ (B, 4, 8)
 ```
 
 **Diffusion process:** Cosine beta schedule, 100 DDPM timesteps, 10-step DDIM inference
+
+**Option B — Dataset-level Augmentation (applied during Phase 3a training):**
+
+Applied per-frame independently before T_obs stacking. Complements Option A by adding
+photometric variation at training time without requiring a Phase 2 re-run.
+
+```python
+transforms.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.1)
+```
+
+Combined A+B strategy:
+- **A** covers geometric DR (FOV, horizon position, crosshair size) and episode-level appearance
+- **B** covers per-sample photometric variation with zero data collection cost
+- Together they force the encoder to learn pose-invariant, appearance-invariant features
 
 **Training hyperparameters (`configs/diffusion_policy.yaml`):**
 
@@ -285,6 +345,100 @@ L_total = L_diffusion + lambda_dispersive * dispersive_loss(features)
 | Dispersive (all layers) | All blocks | Over-regularization check |
 
 Each combination: 3 seeds × average. Non-negotiable for conference submission.
+
+### 3b-ext. Architecture v3.1: IMU Late Fusion & Auxiliary Depth
+
+**Prerequisite:** Phase 3b Run 2 must complete first. Implement before Phase 3c begins.
+
+**Motivation:**
+- Dispersive Loss addresses *feature collapse* (same-looking states mapped to same vector)
+- IMU Late Fusion addresses *visual ambiguity* (states that look identical but have different dynamics)
+- FCN Auxiliary Depth acts as a *multi-task regularizer* (forces the encoder to learn 3D spatial structure)
+  and is fully pruned at deployment — zero inference overhead.
+
+**Architecture (dual-branch, late fusion):**
+
+```
+FPV Stack (6×64×64)
+  → VisionEncoder CNN → 256D vision feature
+                                              ┐
+6D IMU [ωx,ωy,ωz, ax,ay,az]                  │ Late Fusion
+  → MLP(6→64→32) → 32D IMU feature           │
+                                              ┘
+  cat([256D vision, 32D IMU]) → 288D global_cond
+  + sinusoidal_time_embed(128D)
+  → 416D conditioning vector
+  → ConditionalUNet1D → predicted noise ε_θ
+
+[Training only]
+  256D vision feature → FCN depth decoder → (1,64,64) depth map
+```
+
+**cond_dim change:**
+
+```
+Current: cond = cat([vision(256), time(128)]) = 384
+v3.1:    global_cond = cat([vision(256), imu(32)]) = 288
+         cond        = cat([global_cond(288), time(128)]) = 416
+```
+
+**IMU Encoder (lightweight MLP):**
+
+```python
+imu_encoder = nn.Sequential(
+    nn.Linear(6, 64),
+    nn.Mish(),
+    nn.Linear(64, 32)
+)
+```
+
+**FCN Depth Decoder (training only):**
+
+```
+(B, 256) → Unflatten(256, 1, 1) → (B, 256, 1, 1)
+→ ConvTranspose2d(256, 128, k=4, s=1)  → (B, 128, 4, 4)
+→ ConvTranspose2d(128, 64, k=4, s=2, p=1) → (B, 64, 8, 8)
+→ ConvTranspose2d(64, 32, k=4, s=2, p=1)  → (B, 32, 16, 16)
+→ ConvTranspose2d(32, 16, k=4, s=2, p=1)  → (B, 16, 32, 32)
+→ ConvTranspose2d(16, 1, k=4, s=2, p=1)   → (B, 1, 64, 64)
+→ Sigmoid()  [depth normalised to 0–1]
+```
+
+**Total loss (Phase 3c with v3.1 architecture):**
+
+```
+L_total = L_action_diffusion
+        + λ_disp  × L_dispersive(visual_features)
+        + λ_depth × MSE(depth_pred, depth_gt)
+
+Tuning range:
+  λ_disp  ∈ [0.01, 0.5]  (start at 0.1, same as Phase 3b)
+  λ_depth ∈ [0.01, 0.5]  (start at 0.1; zero to disable FCN branch)
+```
+
+**Deployment pruning:** Before ONNX/TensorRT export, remove `depth_decoder` entirely.
+Only encoder + IMU MLP + diffusion UNet are exported. OneDP single-step latency target
+remains < 30 ms on Jetson Orin Nano.
+
+**Files to modify for v3.1:**
+
+| File | Change |
+|------|--------|
+| `models/diffusion_policy.py` | Add `imu_encoder`, update `forward()` signature to accept `imu_data` |
+| `models/conditional_unet1d.py` | Change `feature_dim=288` (no internal changes needed) |
+| `envs/quadrotor_visual_env.py` | Add depth channel rendering to `_render()` |
+| `scripts/collect_data.py` | Store `imu_data` and `depth_maps` in HDF5 |
+| `scripts/train_dppo.py` | Pass `imu_data` from state vector to policy; add `λ_depth` loss term |
+| `configs/diffusion_policy.yaml` | Add `imu_feature_dim: 32`, `lambda_depth: 0.1` |
+
+**Ablation for paper (mandatory):**
+
+| Config | Purpose |
+|--------|---------|
+| No IMU, No FCN (baseline = 3b) | D²PPO contribution isolation |
+| IMU only | IMU fusion contribution |
+| FCN only | Depth auxiliary contribution |
+| IMU + FCN (v3.1 full) | Combined contribution |
 
 ### 3c. DPPO Closed-Loop RL Fine-tuning
 
@@ -344,7 +498,10 @@ Effective decision rate: 50Hz / 4 = 12.5Hz → 50Hz+ after OneDP
 | VTD3 | RGB | Standard visual DRL comparison | DPPO more stable at multimodal scenarios |
 | Standard DP (3a) | RGB | Ablation: dispersive loss contribution | Quantify D²PPO gain |
 | D²PPO (3b) | RGB | Ablation: DPPO finetuning contribution | Quantify RL gain |
-| D²PPO + OneDP (full) | RGB | **Primary method** | — |
+| D²PPO v3.1 no-IMU no-depth | RGB | Ablation: v3.1 IMU + depth contribution baseline | — |
+| D²PPO v3.1 IMU-only | RGB + IMU | Ablation: IMU fusion contribution | — |
+| D²PPO v3.1 depth-only | RGB | Ablation: depth auxiliary contribution | — |
+| D²PPO v3.1 full + OneDP | RGB + IMU | **Primary method** | — |
 | VIO + Geometric Control | RGB + IMU | Modular baseline | End-to-end wins on error accumulation |
 | PPO Expert | Full state | Oracle upper bound | — |
 
@@ -380,6 +537,20 @@ PyTorch Model → ONNX Export → TensorRT FP16/INT8 → Jetson deployment
 Target: end-to-end latency < 30ms (capture + inference + command output)
 ```
 
+**v3.1 deployment graph (pruned):**
+
+```
+[Deploy]  FPV camera (64×64) → VisionEncoder → 256D
+          IMU /fmu/out/vehicle_imu → MLP(6→32) → 32D
+          cat([256D, 32D]) → 288D global_cond
+          → OneDP single-step UNet → 4D motor thrust
+
+[Removed] FCN depth decoder — training-only, stripped before ONNX export
+```
+
+ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to the
+50 Hz control tick before passing to the policy.
+
 ### 5.3 Safety Mechanisms
 
 - PX4 failsafe: return-to-launch if no commands for 500ms
@@ -398,15 +569,24 @@ Target: end-to-end latency < 30ms (capture + inference + command output)
 
 ---
 
-## Architecture Upgrade Path (v2.0 → v3.0)
+## Architecture Upgrade Path (v2.0 → v3.2)
 
-**Immediate (current phase):**
+**Done (Phase 1):**
 - Reward: sigma_pos 0.5 → 0.10 (progressively tightened per run)
 - Actor initialization: hover bias -0.39
 - PPO: target_kl 0.01 → 0.04, vf_coef 0.5 → 1.5, ent_coef 0.01 → 0.001
 
-**Medium-term (Phase 3):**
+**Done (Phase 3a/3b):**
 - Loss: Standard diffusion → D²PPO (dispersive loss + dual-layer MDP)
+- Option B GPU augmentation replacing PIL ColorJitter (9× speedup)
+- Phase 3b conservative HP: β=0.1, lr=5e-6, n_rollout=4096
+
+**v3.1 (Phase 3c — 🔄 DPPO fine-tuning in progress):**
+- Sensing: vision-only → IMU Late Fusion (6D IMU → 32D MLP → cat with 256D vision feature → 288D global_cond)
+- Regularisation: dispersive loss only → dispersive + FCN depth auxiliary (λ_depth=0.1, training only)
+- cond_dim: 384 → 416 (288D global_cond + 128D time embed)
+- New files: `models/vision_dppo_v31.py`, `scripts/train_diffusion_v31.py`, `scripts/train_dppo_v31.py`
+- Deployment: FCN decoder pruned via `save_deployable()` before ONNX export; OneDP latency target unchanged (<30ms)
 - Inference: 10-step DDIM → OneDP single-step distillation
 - Baseline comparison: add BC-LSTM, VTD3 for fair ablation
 
@@ -428,7 +608,7 @@ Target: end-to-end latency < 30ms (capture + inference + command output)
 - [x] PPO expert with TanhNormal distribution + hover bias init
 - [x] RunningMeanStd observation normalization
 - [x] LR/clip range annealing
-- [🔄] PPO tuning to meet phase gate (Run 4 in progress)
+- [x] PPO converged — Run 6 (RMSE 0.069m, 0 crashes)
 
 ### Phase 2: Data Collection
 
@@ -436,6 +616,11 @@ Target: end-to-end latency < 30ms (capture + inference + command output)
 - [x] QuadrotorVisualEnv wrapper (Dict observation space)
 - [x] Data collection script (HDF5 format, gzip compression)
 - [x] DemoDataset with sliding window (T_obs=2, T_pred=8)
+- [x] Option A: Renderer-level DR (per-episode color/brightness/focal/noise)
+- [x] Phase 2 re-run with DR enabled → `data/expert_demos_dr.h5`
+- [x] `_render_depth()` added to `QuadrotorVisualEnv` (v3.1 geometry-based ray casting)
+- [x] `collect_data.py --v31` flag implemented (imu_data + depth_maps fields)
+- [x] v3.1 data collection → `data/expert_demos_v31.h5` (4.04GB, 2026-04-06)
 
 ### Phase 3: Diffusion Policy
 
@@ -447,7 +632,21 @@ Target: end-to-end latency < 30ms (capture + inference + command output)
 - [x] VisionDiffusionPolicy glue module
 - [x] Supervised training script (MSE noise loss)
 - [x] DPPO fine-tuning script (advantage-weighted loss)
-- [ ] D²PPO dispersive loss implementation + ablation
+- [x] Option B: GPU tensor augmentation (brightness/contrast, replaces PIL — 9× faster)
+- [x] Phase 3a re-training with DR data + Option B augmentation (Re-run 2 complete)
+- [x] Phase 3b D²PPO Run 2 (`dppo_20260404_044552`) — best u11, RMSE 0.145m, 50/50 crashes
+- [x] Phase 3b D²PPO Run 3 (`dppo_20260405_155057`) — best u34, RMSE 0.450m, 50/50 crashes (750 updates, ablation)
+- [x] RHC eval: Run 2 vs Run 3 — both 50/50 crash; baseline architecture ceiling confirmed
+- [x] Architecture v3.1: `models/vision_dppo_v31.py` — IMUEncoder, DepthDecoder, VisionDPPOv31
+- [x] Architecture v3.1: `scripts/train_diffusion_v31.py` — supervised pre-training
+- [x] Architecture v3.1: `scripts/train_dppo_v31.py` — DPPO fine-tuning (mini-batch fix)
+- [x] Architecture v3.1: `scripts/evaluate_rhc_v31.py` — RHC evaluator with IMU input
+- [x] Architecture v3.1: `configs/diffusion_policy.yaml` v31 block (imu_feature_dim, lambda_depth)
+- [x] numpy memmap cache `data/v31_mmap/` — 46ms/batch (117× speedup over HDF5 lazy-read)
+- [x] Phase 3a v3.1 supervised pre-training complete (best loss -1.4415, 2026-04-06~08)
+- [🔄] Phase 3c DPPO v3.1 fine-tuning in progress (`train_dppo_v31_20260408_024533`)
+- [ ] λ_depth ablation (0, 0.01, 0.1, 0.5) + IMU ablation (3 seeds each)
+- [ ] ONNX export script with FCN decoder stripping (`save_deployable()` already implemented)
 - [ ] OneDP single-step distillation
 
 ### Phase 4: Evaluation

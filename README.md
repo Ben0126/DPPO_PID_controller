@@ -4,7 +4,7 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Target: CoRL 2025](https://img.shields.io/badge/target-CoRL%202025-gold.svg)]()
+
 
 ---
 
@@ -39,31 +39,30 @@ PPO's Gaussian output assumes a unimodal action distribution. In complex flight 
 
 ## System Architecture / 系統架構
 
+### Baseline (Phase 3a/3b)
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  FPV Image Stack (T_obs=2 frames, 64×64 RGB each)       │
 │  → stacked as (B, 6, 64, 64)                            │
+│  DR: ±sky/ground color, ±brightness, ±focal, σ=5 noise  │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  Vision Encoder                                          │
-│  [Current]  4-layer CNN → 256D features                 │
-│  [Target]   Pretrained ViT-Small + Privileged Decoder   │
-│  → Auxiliary heads for position/velocity (train only)   │
+│  Vision Encoder (4-layer CNN)                           │
+│  → 256D feature vector                                  │
 └────────────────────┬────────────────────────────────────┘
-                     │ (B, 256)
+                     │ (B, 256) + timestep(128) = cond(384)
                      ↓
 ┌─────────────────────────────────────────────────────────┐
 │  D²PPO: Conditional 1D U-Net                            │
 │  + Dispersive Loss (prevents representation collapse)    │
-│  + Dual-layer MDP Policy Gradient                       │
 │  → Predicted noise ε_θ (B, 4, 8)                       │
 └────────────────────┬────────────────────────────────────┘
                      ↓
 ┌─────────────────────────────────────────────────────────┐
-│  Inference: OneDP Single-Step Distillation              │
-│  [Current]  10-step DDIM → 12.5Hz → NOT deployable     │
-│  [Target]   1-step distilled → 62Hz+ → deployable      │
+│  Inference: 10-step DDIM → 12.5Hz                       │
+│  [Target v3.1+] OneDP 1-step → 62Hz+                   │
 └────────────────────┬────────────────────────────────────┘
                      │ (B, T_pred, 4) → execute first T_action steps
                      ↓
@@ -72,22 +71,65 @@ PPO's Gaussian output assumes a unimodal action distribution. In complex flight 
 └─────────────────────────────────────────────────────────┘
 ```
 
+### Architecture v3.1 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth)
+
+```
+┌──────────────────────────────┐  ┌──────────────────────────────┐
+│  FPV Image Stack (B,6,64,64) │  │  6D IMU [ωx,ωy,ωz, ax,ay,az] │
+│  DR: color/brightness/focal  │  │  (body frame, 50Hz aligned)  │
+└──────────────┬───────────────┘  └──────────────┬───────────────┘
+               ↓                                 ↓
+┌──────────────────────────┐     ┌───────────────────────────────┐
+│  Vision Encoder (CNN)    │     │  IMU Encoder MLP              │
+│  → 256D vision_feat      │     │  Linear(6→64→32)              │
+└──────────────┬───────────┘     │  → 32D imu_feat               │
+               │                 └──────────────┬────────────────┘
+               │    cat([256D, 32D])             │
+               └─────────────────┬──────────────┘
+                                 ↓ 288D global_cond
+                   + timestep_embed(128D)
+                                 ↓ 416D cond
+               ┌─────────────────────────────────────────┐
+               │  D²PPO: Conditional 1D U-Net            │
+               │  + Dispersive Loss                      │
+               │  → Predicted noise ε_θ (B, 4, 8)       │
+               └─────────────────┬───────────────────────┘
+                                 ↓
+               ┌─────────────────────────────────────────┐
+               │  OneDP Single-Step Distillation         │
+               │  → 4D motor thrusts @ 62Hz+             │
+               └─────────────────┬───────────────────────┘
+                                 ↓
+               ┌─────────────────────────────────────────┐
+               │  6-DOF Quadrotor (RK4 @ 200Hz)          │
+               └─────────────────────────────────────────┘
+
+[Training only — stripped before deployment]
+256D vision_feat → FCN Depth Decoder (5× ConvTranspose2d) → (1,64,64) depth_pred
+L_total = exp(β×A)×L_diff + λ_disp×L_dispersive + λ_depth×MSE(depth_pred, depth_gt)
+```
+
 ---
 
 ## Development Phases / 開發階段
 
 ```
 Phase 1: PPO Expert + 6-DOF Environment
-         [🔄] Tuning in progress (Run 4)
-              Target: mean position error < 0.1m, crash rate = 0
+         [✓]  Done — Run 6 (RMSE 0.069m, 0 crashes)
 
 Phase 2: FPV Data Collection
-         [ ]  Waiting for Phase 1 gate (expert quality sets the ceiling)
+         [✓]  Done — expert_demos_dr.h5 (1000 ep, 500k steps, DR enabled)
+         [✓]  v3.1 re-collection complete → expert_demos_v31.h5 (4.04GB, IMU+depth)
 
 Phase 3: Vision Diffusion Policy
-   3a    [ ]  CNN encoder + supervised pre-training (baseline)
-   3b    [ ]  D²PPO Dispersive Loss (core contribution, ablation required)
-   3c    [ ]  DPPO closed-loop RL fine-tuning
+   3a    [✓]  Supervised pre-training Re-run 2 complete (DR-aug, 500 epochs)
+              checkpoints/diffusion_policy/20260405_044808/best_model.pt
+   3a-v31[✓]  v3.1 supervised pre-training complete (500 epochs, best loss -1.4415)
+              checkpoints/diffusion_policy/v31_20260406_185128/best_model.pt
+   3b    [✓]  D²PPO Run 2 (dppo_20260404_044552) — best u11, RMSE 0.145m, 50/50 crashes
+   3b    [✓]  D²PPO Run 3 (dppo_20260405_155057) — best u34, RMSE 0.450m, 50/50 crashes
+   3c    [🔄] DPPO v3.1 fine-tuning in progress (train_dppo_v31_20260408_024533)
+              Initial reward +0.631/step — higher than any prior DPPO run start
    3d    [ ]  OneDP single-step distillation (solve deployment latency)
 
 Phase 4: Evaluation
@@ -95,13 +137,15 @@ Phase 4: Evaluation
          [ ]  Closed-loop RHC evaluation
 
 Phase 5: Hardware Deployment
-         [ ]  Jetson Orin Nano + TensorRT
+         [ ]  Jetson Orin Nano + TensorRT (FCN decoder pruned before export)
          [ ]  Real flight testing (with wind disturbance)
 ```
 
-**Current status:** Phase 1 tuning, Run 4 in progress.
-PPO Expert training history: 0.264m (Run 1) → 0.0993m (Run 2) → 0.1041m (Run 3) → TBD (Run 4).
-See [docs/dev_log.md](docs/dev_log.md) for detailed training analysis.
+**Current status:** Phase 3c DPPO v3.1 fine-tuning in progress (`train_dppo_v31_20260408_024533`).
+Baseline DPPO (Runs 1-3) ceiling confirmed at RMSE 0.145m, 50/50 crashes — value net lag causes early collapse.
+v3.1 architecture (IMU Late Fusion + FCN Depth) fully implemented and training.
+Initial reward (+0.631/step) already exceeds all prior run starting points.
+See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for detailed training analysis.
 
 ---
 
@@ -183,14 +227,18 @@ DPPO_PID_controller/
 │   ├── vision_encoder.py        # CNN (current) → ViT (target upgrade)
 │   ├── conditional_unet1d.py    # 1D U-Net (FiLM conditioning)
 │   ├── diffusion_process.py     # DDPM/DDIM forward + reverse process
-│   └── diffusion_policy.py      # Full policy (with D²PPO loss)
+│   ├── diffusion_policy.py      # Baseline policy (with D²PPO loss)
+│   └── vision_dppo_v31.py       # v3.1 policy (IMU Late Fusion + FCN Depth)
 │
 ├── scripts/
 │   ├── train_ppo_expert.py      # Phase 1
-│   ├── collect_data.py          # Phase 2
-│   ├── train_diffusion.py       # Phase 3a
-│   ├── train_dppo.py            # Phase 3b-c
-│   └── evaluate_rhc.py          # Phase 4
+│   ├── collect_data.py          # Phase 2 (--v31 flag for IMU+depth)
+│   ├── train_diffusion.py       # Phase 3a (baseline)
+│   ├── train_diffusion_v31.py   # Phase 3a v3.1 (IMU + depth aux)
+│   ├── train_dppo.py            # Phase 3b (baseline DPPO)
+│   ├── train_dppo_v31.py        # Phase 3c (DPPO v3.1)
+│   ├── evaluate_rhc.py          # Phase 4 (baseline)
+│   └── evaluate_rhc_v31.py      # Phase 4 v3.1 (with IMU input)
 │
 ├── docs/
 │   ├── dev_log.md               # Training diagnostic log (research journal)
@@ -244,11 +292,11 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 | Metric | Current | Target | Conference |
 |--------|---------|--------|-----------|
-| Position RMSE | ~0.104m (Run 3) | **<0.10m (Phase 1)** / <0.15m (Phase 4) | ICRA |
-| Crash Rate | 0% | Maintain 0% (Phase 1) / <10% (Phase 4) | CoRL |
-| Inference Latency | ~80ms (10-step DDIM) | **<20ms (after OneDP)** | CoRL/ICRA |
+| Position RMSE | 0.069m (PPO) / 0.145m (DPPO Run 2) / 0.453m (v3.1 supervised) | **<0.145m (Phase 3c goal)** | ICRA |
+| Crash Rate | 0% (PPO) / 100% (all diffusion runs to date) | **<50% (Phase 3c) → <10% (Phase 4)** | CoRL |
+| Inference Latency | ~73ms (10-step DDIM v3.1) | **<20ms (after OneDP)** | CoRL/ICRA |
 | Control Frequency | 12.5Hz | **>60Hz (after OneDP)** | ICRA |
-| Diffusion/PPO Ratio | — | >80% | CoRL |
+| Diffusion/PPO Ratio | 15.84% (v3.1 supervised) | >80% | CoRL |
 
 ---
 

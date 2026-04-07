@@ -166,6 +166,11 @@ def train(args):
         feature_dim=vision_cfg['feature_dim'],
         hidden_dim=dppo_cfg['value_hidden_dim'],
     ).to(device)
+    if args.pretrained_value:
+        value_net.load_state_dict(
+            torch.load(args.pretrained_value, map_location=device, weights_only=True)
+        )
+        print(f"Loaded pretrained value net from: {args.pretrained_value}")
 
     # Optimizers
     policy_optimizer = torch.optim.AdamW(
@@ -260,8 +265,12 @@ def train(args):
         if mean_reward > best_reward:
             best_reward = mean_reward
             policy.save(os.path.join(save_dir, "best_dppo_model.pt"))
+            torch.save(value_net.state_dict(),
+                       os.path.join(save_dir, "best_value_net.pt"))
 
     policy.save(os.path.join(save_dir, "final_dppo_model.pt"))
+    torch.save(value_net.state_dict(),
+               os.path.join(save_dir, "final_value_net.pt"))
     writer.close()
     print(f"\nDPPO training complete! Best reward: {best_reward:.4f}")
 
@@ -272,6 +281,8 @@ if __name__ == "__main__":
     parser.add_argument('--quadrotor-config', type=str, default='configs/quadrotor.yaml')
     parser.add_argument('--pretrained', type=str, default=None,
                         help='Path to pretrained diffusion policy')
+    parser.add_argument('--pretrained-value', type=str, default=None,
+                        help='Path to pretrained value net (best_value_net.pt from prior run)')
     parser.add_argument('--total-updates', type=int, default=500)
     args = parser.parse_args()
     train(args)

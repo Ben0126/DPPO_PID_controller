@@ -24,8 +24,13 @@ class DemoDataset(torch.utils.data.Dataset):
     Dataset of expert demonstrations with sliding window over episodes.
 
     Each sample:
-        image_stack:    (T_obs * C, H, W)    — stacked past frames
+        image_stack:    (T_obs * C, H, W)    — stacked past frames, float32 [0,255]
         action_sequence: (T_pred, action_dim) — future action sequence
+
+    Option B augmentation is intentionally NOT done here.
+    GPU-based tensor augmentation is applied in the training loop after
+    .to(device), which is ~9× faster than PIL-based CPU augmentation.
+    See train_diffusion.py for the augmentation implementation.
     """
 
     def __init__(self, hdf5_path: str, T_obs: int = 2, T_pred: int = 8):
@@ -44,7 +49,7 @@ class DemoDataset(torch.utils.data.Dataset):
 
                 ep_len = len(images)
                 # Create sliding window samples
-                for t in range(T_obs - 1, ep_len - T_pred):
+                for t in range(T_obs - 1, ep_len - T_pred + 1):
                     self.samples.append((ep_key, t))
 
             # Store full data for indexing
@@ -65,7 +70,7 @@ class DemoDataset(torch.utils.data.Dataset):
         ep_key, t = self.samples[idx]
 
         # Stack T_obs consecutive images along channel dimension
-        images = self._images[ep_key]  # (T, C, H, W)
+        images = self._images[ep_key]  # (T, C, H, W) uint8
         img_stack = []
         for i in range(self.T_obs):
             frame_idx = t - (self.T_obs - 1) + i
