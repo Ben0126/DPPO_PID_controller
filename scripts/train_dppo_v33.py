@@ -1,5 +1,5 @@
 """
-Phase 3c v3.2: DPPO Closed-Loop RL Fine-tuning (physics-based IMU)
+Phase 3c v3.3: DPPO Closed-Loop RL Fine-tuning (physics-based IMU)
 
 Identical training loop to train_dppo_v31.py — same VisionDPPOv31 model,
 same ValueNetworkV31, same advantage-weighted diffusion loss, same
@@ -11,8 +11,8 @@ being estimated by finite-differencing v_body. This removes the
 supervised→RL covariate shift documented in docs/dev_log_phase2_3.md §13.4.
 
 Usage:
-    python -m scripts.train_dppo_v32 \
-        --pretrained checkpoints/diffusion_policy/v32_<timestamp>/best_model.pt
+    python -m scripts.train_dppo_v33 \
+        --pretrained checkpoints/diffusion_policy/v33_<timestamp>/best_model.pt
 """
 
 import os
@@ -37,7 +37,7 @@ def collect_rollout(env, policy, value_net,
                     n_steps: int, T_obs: int, T_action: int,
                     lambda_depth: float, device: torch.device):
     """
-    RHC rollout for v3.2: IMU comes from env.unwrapped.get_imu() directly.
+    RHC rollout for v3.3: IMU comes from env.unwrapped.get_imu() directly.
     No more finite-difference; no more prev_v_body bookkeeping.
     """
     rollout = {
@@ -56,7 +56,7 @@ def collect_rollout(env, policy, value_net,
         img_stack  = np.concatenate(image_buffer[-T_obs:], axis=0)
         img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device)
 
-        # v3.2: physics-based IMU
+        # v3.3: physics-based IMU
         imu_vec    = base_env.get_imu()
         imu_tensor = torch.from_numpy(imu_vec).float().unsqueeze(0).to(device)
 
@@ -160,7 +160,7 @@ def train(args):
     )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_tag   = f"dppo_v32_{timestamp}"
+    run_tag   = f"dppo_v33_{timestamp}"
     log_dir   = os.path.join(log_cfg['tensorboard_log'], run_tag)
     save_dir  = os.path.join(log_cfg['save_path'],       run_tag)
     os.makedirs(log_dir, exist_ok=True)
@@ -177,7 +177,7 @@ def train(args):
     total_updates         = args.total_updates
 
     print(f"\n{'='*60}")
-    print(f"DPPO v3.2 Fine-Tuning (physics-based IMU)")
+    print(f"DPPO v3.3 Fine-Tuning (physics-based IMU)")
     print(f"Total updates: {total_updates} | Rollout steps: {n_rollout_steps}")
     print(f"β={beta} | λ_disp={lambda_dispersive} | λ_depth={lambda_depth}")
     print(f"Value warm-up: {value_warmup_updates} updates | VLoss best-ckpt threshold: {vloss_best_threshold}")
@@ -257,13 +257,13 @@ def train(args):
                     metrics = mb_m
 
         mean_reward = np.mean(rollout['rewards'])
-        writer.add_scalar('dppo_v32/mean_reward',        mean_reward,                update)
-        writer.add_scalar('dppo_v32/policy_loss',        loss.item(),                update)
-        writer.add_scalar('dppo_v32/value_loss',         value_loss.item(),          update)
-        writer.add_scalar('dppo_v32/loss_diffusion',     metrics['loss_diffusion'],  update)
-        writer.add_scalar('dppo_v32/loss_dispersive',    metrics['loss_dispersive'], update)
-        writer.add_scalar('dppo_v32/loss_depth',         metrics['loss_depth'],      update)
-        writer.add_scalar('dppo_v32/warmup',             int(in_warmup),             update)
+        writer.add_scalar('dppo_v33/mean_reward',        mean_reward,                update)
+        writer.add_scalar('dppo_v33/policy_loss',        loss.item(),                update)
+        writer.add_scalar('dppo_v33/value_loss',         value_loss.item(),          update)
+        writer.add_scalar('dppo_v33/loss_diffusion',     metrics['loss_diffusion'],  update)
+        writer.add_scalar('dppo_v33/loss_dispersive',    metrics['loss_dispersive'], update)
+        writer.add_scalar('dppo_v33/loss_depth',         metrics['loss_depth'],      update)
+        writer.add_scalar('dppo_v33/warmup',             int(in_warmup),             update)
 
         warmup_tag = " [WARMUP]" if in_warmup else ""
         print(f"Update {update+1:>4}/{total_updates}{warmup_tag} | "
@@ -278,24 +278,24 @@ def train(args):
                 and value_loss.item() < vloss_best_threshold
                 and mean_reward > best_reward):
             best_reward = mean_reward
-            policy.save(os.path.join(save_dir, "best_dppo_v32_model.pt"))
+            policy.save(os.path.join(save_dir, "best_dppo_v33_model.pt"))
             torch.save(value_net.state_dict(),
-                       os.path.join(save_dir, "best_value_net_v32.pt"))
+                       os.path.join(save_dir, "best_value_net_v33.pt"))
 
-    policy.save(os.path.join(save_dir, "final_dppo_v32_model.pt"))
+    policy.save(os.path.join(save_dir, "final_dppo_v33_model.pt"))
     policy.save_deployable(os.path.join(save_dir, "deploy_model.pt"))
     torch.save(value_net.state_dict(),
-               os.path.join(save_dir, "final_value_net_v32.pt"))
+               os.path.join(save_dir, "final_value_net_v33.pt"))
     writer.close()
-    print(f"\nDPPO v3.2 training complete! Best reward: {best_reward:.4f}")
+    print(f"\nDPPO v3.3 training complete! Best reward: {best_reward:.4f}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="DPPO v3.2 Fine-Tuning")
+    parser = argparse.ArgumentParser(description="DPPO v3.3 Fine-Tuning")
     parser.add_argument('--config',           type=str, default='configs/diffusion_policy.yaml')
     parser.add_argument('--quadrotor-config', type=str, default='configs/quadrotor.yaml')
     parser.add_argument('--pretrained',       type=str, default=None,
-                        help='Path to pretrained VisionDPPOv31 checkpoint (trained on v3.2 data)')
+                        help='Path to pretrained VisionDPPOv31 checkpoint (trained on v3.3 data)')
     parser.add_argument('--pretrained-value', type=str, default=None,
                         help='Path to pretrained value net checkpoint')
     parser.add_argument('--total-updates',    type=int, default=500)

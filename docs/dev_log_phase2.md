@@ -66,3 +66,129 @@ action_dim:  4
 
 ---
 
+
+---
+<!-- auto-log 2026-04-11 19:11:56 edit -->
+### [Auto-Log] 2026-04-11 19:11:56 — Script Fix
+
+**File:** `scripts\collect_data.py`
+
+**Before:**
+```python
+if args.v31 and args.v32:
+        raise ValueError("--v31 and --v32 are mutually exclusive; pick one.")
+
+    with_aux = args.v31 or args.v32
+    if args.v31:
+        print("v3.1 mode: saving imu_data (6D, finite-difference) + depth_maps")
+    elif args.v32:
+        print("v3.2 mode: saving imu_data (6D, physics-based) + depth_maps")
+```
+
+**After:**
+```python
+if args.v31 and args.v33:
+        raise ValueError("--v31 and --v33 are mutually exclusive; pick one.")
+
+    with_aux = args.v31 or args.v33
+    if args.v31:
+        print("v3.1 mode: saving imu_data (6D, finite-difference) + depth_maps")
+    elif args.v33:
+        print("v3.3 mode: saving imu_data (6D, physics-based, normalized) + depth_maps")
+```
+
+---
+<!-- auto-log 2026-04-11 19:12:00 edit -->
+### [Auto-Log] 2026-04-11 19:12:00 — Script Fix
+
+**File:** `scripts\collect_data.py`
+
+**Before:**
+```python
+# v3.2: physics-based IMU pulled straight from the env
+                if args.v32:
+```
+
+**After:**
+```python
+# v3.3: physics-based normalized IMU pulled straight from the env
+                if args.v33:
+```
+
+---
+<!-- auto-log 2026-04-11 19:12:04 edit -->
+### [Auto-Log] 2026-04-11 19:12:04 — Script Fix
+
+**File:** `scripts\collect_data.py`
+
+**Before:**
+```python
+hf.attrs['v31'] = args.v31
+        hf.attrs['v32'] = args.v32
+```
+
+**After:**
+```python
+hf.attrs['v31'] = args.v31
+        hf.attrs['v33'] = args.v33
+```
+
+---
+<!-- auto-log 2026-04-11 19:12:08 edit -->
+### [Auto-Log] 2026-04-11 19:12:08 — Script Fix
+
+**File:** `scripts\collect_data.py`
+
+**Before:**
+```python
+elif args.v32:
+        fmt = "imu_data (physics) + depth_maps"
+```
+
+**After:**
+```python
+elif args.v33:
+        fmt = "imu_data (physics, normalized) + depth_maps"
+```
+
+---
+<!-- auto-log 2026-04-11 19:12:13 edit -->
+### [Auto-Log] 2026-04-11 19:12:13 — Script Fix
+
+**File:** `scripts\collect_data.py`
+
+**Before:**
+```python
+parser.add_argument('--v32', action='store_true',
+                        help='Enable v3.2 format: physics-based IMU via env.get_imu() + depth_maps')
+```
+
+**After:**
+```python
+parser.add_argument('--v33', action='store_true',
+                        help='Enable v3.3 format: physics-based normalized IMU via env.get_imu() + depth_maps')
+```
+
+---
+<!-- auto-log 2026-04-11 19:14:42 edit -->
+### [Auto-Log] 2026-04-11 19:14:42 — Script Fix
+
+**File:** `scripts\collect_data.py`
+
+**Before:**
+```python
+# v3.2 collection (physics-based IMU via env.get_imu() + depth_maps):
+    python -m scripts.collect_data --model checkpoints/ppo_expert/.../best_model.pt \
+                                   --norm checkpoints/ppo_expert/.../best_obs_rms.npz \
+                                   --output data/expert_demos_v32.h5 \
+                                   --v32
+```
+
+**After:**
+```python
+# v3.3 collection (physics-based normalized IMU via env.get_imu() + depth_maps):
+    python -m scripts.collect_data --model checkpoints/ppo_expert/.../best_model.pt \
+                                   --norm checkpoints/ppo_expert/.../best_obs_rms.npz \
+                                   --output data/expert_demos_v33.h5 \
+                                   --v33
+```

@@ -21,6 +21,7 @@ REPO = Path(__file__).parent.parent
 # ── Log 路由表（priority: first match wins）──────────────────────
 #  key → 實際檔案路徑
 LOG_FILES = {
+    "phase3c_v33": REPO / "docs" / "dev_log_phase3c_v33.md",
     "phase3c_v32": REPO / "docs" / "dev_log_phase3c_v32.md",
     "phase3c_v31": REPO / "docs" / "dev_log_phase3c_v31.md",
     "phase3b":     REPO / "docs" / "dev_log_phase3b.md",
@@ -32,6 +33,7 @@ LOG_FILES = {
 
 # (regex, log_key) — 同時用於 Bash command 和 file path 匹配
 ROUTING_RULES = [
+    (r"v33",                          "phase3c_v33"),
     (r"v32",                          "phase3c_v32"),
     (r"v31",                          "phase3c_v31"),
     (r"train_dppo|evaluate_rhc",      "phase3b"),
@@ -52,12 +54,15 @@ def route_log(text: str) -> Path:
 # ── Bash 監控清單 ──────────────────────────────────────────────
 BASH_PATTERNS = [
     (r"check_device",        "Device Check"),
+    (r"train_dppo_v33",      "DPPO v3.3 Training — Started"),
     (r"train_dppo_v32",      "DPPO v3.2 Training — Started"),
     (r"train_dppo_v31",      "DPPO v3.1 Training — Started"),
     (r"train_dppo",          "DPPO Training — Started"),
+    (r"train_diffusion_v33", "Diffusion v3.3 Training — Started"),
     (r"train_diffusion_v32", "Diffusion v3.2 Training — Started"),
     (r"train_diffusion_v31", "Diffusion v3.1 Training — Started"),
     (r"train_diffusion",     "Diffusion Training — Started"),
+    (r"evaluate_rhc_v33",    "RHC v3.3 Evaluation"),
     (r"evaluate_rhc_v32",    "RHC v3.2 Evaluation"),
     (r"evaluate_rhc_v31",    "RHC v3.1 Evaluation"),
     (r"evaluate_rhc",        "RHC Evaluation"),

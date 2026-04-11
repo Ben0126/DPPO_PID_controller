@@ -1,13 +1,13 @@
 """
-Phase 4: Closed-Loop RHC Evaluation — Architecture v3.2 (physics-based IMU)
+Phase 4: Closed-Loop RHC Evaluation — Architecture v3.3 (physics-based IMU)
 
-Evaluates VisionDPPOv31 trained on v3.2 data with RHC. IMU is pulled
+Evaluates VisionDPPOv31 trained on v3.3 data with RHC. IMU is pulled
 directly from base_env.get_imu() (gyro + specific force) — no more
 finite-difference reconstruction.
 
 Usage:
-    python -m scripts.evaluate_rhc_v32 \
-        --diffusion-model checkpoints/diffusion_policy/v32_<timestamp>/best_model.pt \
+    python -m scripts.evaluate_rhc_v33 \
+        --diffusion-model checkpoints/diffusion_policy/v33_<timestamp>/best_model.pt \
         --ppo-model checkpoints/ppo_expert/20260401_103107/best_model.pt \
         --ppo-norm  checkpoints/ppo_expert/20260401_103107/best_obs_rms.npz
 """
@@ -32,11 +32,11 @@ from models.vision_dppo_v31 import VisionDPPOv31
 from models.ppo_expert import PPOExpert, RunningMeanStd
 
 
-def evaluate_v32(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
+def evaluate_v33(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
                  policy: VisionDPPOv31,
                  n_episodes: int, T_obs: int, T_action: int,
                  device: torch.device) -> Dict:
-    """Evaluate VisionDPPOv31 (trained on v3.2 data) with RHC."""
+    """Evaluate VisionDPPOv31 (trained on v3.3 data) with RHC."""
     results = {
         'rewards': [], 'lengths': [], 'crashes': 0,
         'position_rmse': [], 'inference_times': [],
@@ -56,7 +56,7 @@ def evaluate_v32(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
             img_stack  = np.concatenate(image_buffer[-T_obs:], axis=0)
             img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device)
 
-            # v3.2: physics-based IMU
+            # v3.3: physics-based IMU
             imu_vec    = base_env.get_imu()
             imu_tensor = torch.from_numpy(imu_vec).float().unsqueeze(0).to(device)
 
@@ -130,13 +130,13 @@ def plot_results(diff_results: Dict, ppo_results: Dict, save_dir: str):
     os.makedirs(save_dir, exist_ok=True)
     fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
-    axes[0].bar(['v3.2 RHC', 'PPO Expert'],
+    axes[0].bar(['v3.3 RHC', 'PPO Expert'],
                 [np.mean(diff_results['rewards']), np.mean(ppo_results['rewards'])],
                 yerr=[np.std(diff_results['rewards']), np.std(ppo_results['rewards'])],
                 capsize=5)
     axes[0].set_title('Mean Episode Reward')
 
-    axes[1].bar(['v3.2 RHC', 'PPO Expert'],
+    axes[1].bar(['v3.3 RHC', 'PPO Expert'],
                 [np.mean(diff_results['position_rmse']),
                  np.mean(ppo_results['position_rmse'])],
                 yerr=[np.std(diff_results['position_rmse']),
@@ -144,12 +144,12 @@ def plot_results(diff_results: Dict, ppo_results: Dict, save_dir: str):
                 capsize=5)
     axes[1].set_title('Position RMSE (m)')
 
-    axes[2].bar(['v3.2 RHC', 'PPO Expert'],
+    axes[2].bar(['v3.3 RHC', 'PPO Expert'],
                 [diff_results['crashes'], ppo_results['crashes']])
     axes[2].set_title('Crash Count')
 
     plt.tight_layout()
-    plt.savefig(os.path.join(save_dir, 'comparison_v32.png'), dpi=150)
+    plt.savefig(os.path.join(save_dir, 'comparison_v33.png'), dpi=150)
     plt.close()
 
     if diff_results['inference_times']:
@@ -157,10 +157,10 @@ def plot_results(diff_results: Dict, ppo_results: Dict, save_dir: str):
         ax.hist(diff_results['inference_times'], bins=50, edgecolor='black')
         ax.axvline(50, color='r', linestyle='--', label='50ms target')
         ax.set_xlabel('Inference Time (ms)')
-        ax.set_title('DDIM Inference Time Distribution (v3.2)')
+        ax.set_title('DDIM Inference Time Distribution (v3.3)')
         ax.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(save_dir, 'inference_time_v32.png'), dpi=150)
+        plt.savefig(os.path.join(save_dir, 'inference_time_v33.png'), dpi=150)
         plt.close()
 
     print(f"Plots saved to: {save_dir}")
@@ -174,7 +174,7 @@ def evaluate(args):
     vision_cfg = cfg['vision']
     action_cfg = cfg['action']
 
-    print("\n=== Evaluating VisionDPPOv31 on v3.2 IMU (RHC) ===")
+    print("\n=== Evaluating VisionDPPOv31 on v3.3 IMU (normalized) (RHC) ===")
     base_env   = QuadrotorEnv(config_path=args.quadrotor_config)
     visual_env = QuadrotorVisualEnv(base_env, image_size=vision_cfg['image_size'])
 
@@ -194,7 +194,7 @@ def evaluate(args):
     policy.load(args.diffusion_model)
     policy.eval()
 
-    diff_results = evaluate_v32(
+    diff_results = evaluate_v33(
         visual_env, base_env, policy, args.n_episodes,
         T_obs=vision_cfg['T_obs'],
         T_action=action_cfg['T_action'],
@@ -202,7 +202,7 @@ def evaluate(args):
     )
 
     n = args.n_episodes
-    print(f"\n--- v3.2 Results ({n} episodes) ---")
+    print(f"\n--- v3.3 Results ({n} episodes) ---")
     print(f"  Mean reward:    {np.mean(diff_results['rewards']):.2f} "
           f"(+/- {np.std(diff_results['rewards']):.2f})")
     print(f"  Position RMSE:  {np.mean(diff_results['position_rmse']):.4f} m")
@@ -237,7 +237,7 @@ def evaluate(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate VisionDPPOv32 with RHC")
+    parser = argparse.ArgumentParser(description="Evaluate VisionDPPOv33 with RHC")
     parser.add_argument('--diffusion-model',  type=str, required=True)
     parser.add_argument('--diffusion-config', type=str,
                         default='configs/diffusion_policy.yaml')
@@ -248,6 +248,6 @@ if __name__ == "__main__":
     parser.add_argument('--ppo-hidden-dim',   type=int, default=256)
     parser.add_argument('--n-episodes',       type=int, default=50)
     parser.add_argument('--output-dir',       type=str,
-                        default='evaluation_results/rhc_v32/')
+                        default='evaluation_results/rhc_v33/')
     args = parser.parse_args()
     evaluate(args)

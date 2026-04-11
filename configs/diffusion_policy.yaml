@@ -84,3 +84,23 @@ v31:
   # No IMU:   imu_feature_dim irrelevant (remove imu_encoder from model init)
   # No depth: lambda_depth: 0.0
   # Full v3.1: both enabled (default above)
+
+# Architecture v3.3 — Physics-based IMU (normalized) + FCN Auxiliary Depth
+# v3.2 → v3.3 rename (2026-04-11): added IMU normalization (P6 fix)
+#   gyro / 2.0, sf_x/y / 5.0, (sf_z - (-9.81)) / 5.0 → all channels ~[-1,+1]
+# Scripts: train_diffusion_v33.py (Phase 3a) + train_dppo_v33.py (Phase 3c)
+# Data:    collect_data.py --v33  →  data/expert_demos_v33.h5
+v33:
+  # IMU encoder (same arch as v3.1)
+  imu_feature_dim: 32            # IMU MLP output dim: Linear(6→64→32)
+  global_cond_dim: 288           # vision(256) + imu(32) fed into UNet
+
+  # Loss weights
+  lambda_dispersive: 0.1
+  lambda_depth: 0.1
+
+  # Depth normalisation
+  depth_max_m: 10.0
+
+  # Dataset (v3.3 format: normalized physics-based IMU + depth_maps)
+  dataset_path_v33: "data/expert_demos_v33.h5"

@@ -1,16 +1,16 @@
 """
-Phase 3a v3.2: Supervised Diffusion Policy Pre-training (physics-based IMU)
+Phase 3a v3.3: Supervised Diffusion Policy Pre-training (physics-based IMU)
 
 Identical architecture to v3.1 (VisionDPPOv31 — IMU Late Fusion + Depth Aux),
-but trained on expert_demos_v32.h5 which carries physics-based IMU from
+but trained on expert_demos_v33.h5 which carries physics-based IMU from
 env.get_imu() instead of the v3.1 finite-difference pseudo-IMU.
 
 Requires:
-    data/expert_demos_v32.h5  (from scripts/collect_data.py --v32)
-    data/v32_mmap/            (built automatically on first run)
+    data/expert_demos_v33.h5  (from scripts/collect_data.py --v33)
+    data/v33_mmap/            (built automatically on first run)
 
 Usage:
-    python -m scripts.train_diffusion_v32 --config configs/diffusion_policy.yaml
+    python -m scripts.train_diffusion_v33 --config configs/diffusion_policy.yaml
 """
 
 import os
@@ -29,18 +29,18 @@ from models.vision_dppo_v31 import VisionDPPOv31, DemoDatasetV31
 
 
 # ----------------------------------------------------------------------------
-# v3.2 dataset: identical to DemoDatasetV31 except it reads from data/v32_mmap/
+# v3.3 dataset: identical to DemoDatasetV31 except it reads from data/v33_mmap/
 # ----------------------------------------------------------------------------
 class DemoDatasetV32(DemoDatasetV31):
-    MMAP_DIR = 'data/v32_mmap'
+    MMAP_DIR = 'data/v33_mmap'
 
 
-def _ensure_v32_cache(hdf5_path: str):
-    """Build data/v32_mmap/ on first run (one-shot ~1 min)."""
+def _ensure_v33_cache(hdf5_path: str):
+    """Build data/v33_mmap/ on first run (one-shot ~1 min)."""
     cache_dir = DemoDatasetV32.MMAP_DIR
     if os.path.isfile(f'{cache_dir}/images.dat'):
         return
-    print(f"[v32] Building memmap cache at {cache_dir}/ from {hdf5_path} ...")
+    print(f"[v33] Building memmap cache at {cache_dir}/ from {hdf5_path} ...")
     DemoDatasetV32.build_mmap_cache(hdf5_path, out_dir=cache_dir)
 
 
@@ -63,9 +63,9 @@ def train(args):
     lambda_dispersive = v31_cfg.get('lambda_dispersive', 0.1)
     lambda_depth      = v31_cfg.get('lambda_depth', 0.1)
 
-    # v3.2 dataset path (can be overridden via CLI)
-    dataset_path = args.dataset or 'data/expert_demos_v32.h5'
-    _ensure_v32_cache(dataset_path)
+    # v3.3 dataset path (can be overridden via CLI)
+    dataset_path = args.dataset or 'data/expert_demos_v33.h5'
+    _ensure_v33_cache(dataset_path)
 
     dataset = DemoDatasetV32(
         hdf5_path=dataset_path,
@@ -121,7 +121,7 @@ def train(args):
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_tag    = f"v32_{timestamp}"
+    run_tag    = f"v33_{timestamp}"
     log_dir    = os.path.join(log_cfg['tensorboard_log'], run_tag)
     save_dir   = os.path.join(log_cfg['save_path'], run_tag)
     os.makedirs(log_dir, exist_ok=True)
@@ -133,7 +133,7 @@ def train(args):
     checkpoint_freq  = log_cfg.get('checkpoint_freq', 50)
 
     print(f"\n{'='*60}")
-    print(f"Training VisionDPPOv31 on v3.2 data (physics-based IMU)")
+    print(f"Training VisionDPPOv31 on v3.3 data (physics-based IMU)")
     print(f"Epochs: {num_epochs}, Batch: {train_cfg['batch_size']}")
     print(f"{'='*60}\n")
 
@@ -200,7 +200,7 @@ def train(args):
               f"LR: {scheduler.get_last_lr()[0]:.2e}")
 
         if (epoch + 1) % checkpoint_freq == 0:
-            ckpt_path = os.path.join(save_dir, f"v32_epoch_{epoch+1}.pt")
+            ckpt_path = os.path.join(save_dir, f"v33_epoch_{epoch+1}.pt")
             policy.save(ckpt_path)
             print(f"  Checkpoint: {ckpt_path}")
 
@@ -217,9 +217,9 @@ def train(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train VisionDPPOv31 on v3.2 data")
+    parser = argparse.ArgumentParser(description="Train VisionDPPOv31 on v3.3 data")
     parser.add_argument('--config', type=str, default='configs/diffusion_policy.yaml')
     parser.add_argument('--dataset', type=str, default=None,
-                        help='Override path to expert_demos_v32.h5')
+                        help='Override path to expert_demos_v33.h5')
     args = parser.parse_args()
     train(args)

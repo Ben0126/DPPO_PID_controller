@@ -15,11 +15,11 @@ Usage:
                                    --output data/expert_demos_v31.h5 \
                                    --v31
 
-    # v3.2 collection (physics-based IMU via env.get_imu() + depth_maps):
+    # v3.3 collection (physics-based normalized IMU via env.get_imu() + depth_maps):
     python -m scripts.collect_data --model checkpoints/ppo_expert/.../best_model.pt \
                                    --norm checkpoints/ppo_expert/.../best_obs_rms.npz \
-                                   --output data/expert_demos_v32.h5 \
-                                   --v32
+                                   --output data/expert_demos_v33.h5 \
+                                   --v33
 """
 
 import os
@@ -47,14 +47,14 @@ def collect_data(args):
     dt = 1.0 / 50.0  # 50 Hz control loop
 
     # Mutually exclusive sanity check
-    if args.v31 and args.v32:
-        raise ValueError("--v31 and --v32 are mutually exclusive; pick one.")
+    if args.v31 and args.v33:
+        raise ValueError("--v31 and --v33 are mutually exclusive; pick one.")
 
-    with_aux = args.v31 or args.v32
+    with_aux = args.v31 or args.v33
     if args.v31:
         print("v3.1 mode: saving imu_data (6D, finite-difference) + depth_maps")
-    elif args.v32:
-        print("v3.2 mode: saving imu_data (6D, physics-based) + depth_maps")
+    elif args.v33:
+        print("v3.3 mode: saving imu_data (6D, physics-based, normalized) + depth_maps")
 
     # Load PPO expert
     agent = PPOExpert(state_dim=state_dim, action_dim=action_dim,
@@ -113,8 +113,8 @@ def collect_data(args):
                         np.concatenate([omega, accel]).astype(np.float32))  # (6,)
                     depth_maps_ep.append(env._render_depth())               # (1,H,W)
 
-                # v3.2: physics-based IMU pulled straight from the env
-                if args.v32:
+                # v3.3: physics-based normalized IMU pulled straight from the env
+                if args.v33:
                     imu_vec = base_env.get_imu()                            # (6,)
                     imu_data_ep.append(imu_vec.astype(np.float32))
                     depth_maps_ep.append(env._render_depth())               # (1,H,W)
@@ -146,15 +146,15 @@ def collect_data(args):
         hf.attrs['state_dim'] = state_dim
         hf.attrs['action_dim'] = action_dim
         hf.attrs['v31'] = args.v31
-        hf.attrs['v32'] = args.v32
+        hf.attrs['v33'] = args.v33
 
     print(f"\nData collection complete!")
     print(f"  Episodes: {args.n_episodes}")
     print(f"  Total steps: {total_steps:,}")
     if args.v31:
         fmt = "imu_data (finite-diff) + depth_maps"
-    elif args.v32:
-        fmt = "imu_data (physics) + depth_maps"
+    elif args.v33:
+        fmt = "imu_data (physics, normalized) + depth_maps"
     else:
         fmt = "disabled"
     print(f"  aux fields: {fmt}")
@@ -174,7 +174,7 @@ if __name__ == "__main__":
     parser.add_argument('--hidden-dim', type=int, default=256)
     parser.add_argument('--v31', action='store_true',
                         help='Enable v3.1 format: finite-difference IMU + depth_maps (deprecated)')
-    parser.add_argument('--v32', action='store_true',
-                        help='Enable v3.2 format: physics-based IMU via env.get_imu() + depth_maps')
+    parser.add_argument('--v33', action='store_true',
+                        help='Enable v3.3 format: physics-based normalized IMU via env.get_imu() + depth_maps')
     args = parser.parse_args()
     collect_data(args)
