@@ -42,7 +42,7 @@ training:
 
 # DPPO fine-tuning (Phase 3b)
 dppo:
-  enabled: false                  # set true for RL fine-tuning
+  enabled: true                   # Run5: P5 hypothesis validation — original pretrained (no DR-aug) + Run4 config
   advantage_beta: 0.05            # Run2(v3.1): 0.15→0.05 — max weight exp(0.15)≈1.16×; reduces noisy-advantage amplification
   gamma: 0.99
   gae_lambda: 0.95

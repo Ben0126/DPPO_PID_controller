@@ -17,13 +17,49 @@ from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).parent.parent
-LOG_PATH = REPO / "docs" / "dev_log_phase2_3.md"
+
+# ── Log 路由表（priority: first match wins）──────────────────────
+#  key → 實際檔案路徑
+LOG_FILES = {
+    "phase3c_v32": REPO / "docs" / "dev_log_phase3c_v32.md",
+    "phase3c_v31": REPO / "docs" / "dev_log_phase3c_v31.md",
+    "phase3b":     REPO / "docs" / "dev_log_phase3b.md",
+    "phase3a":     REPO / "docs" / "dev_log_phase3a.md",
+    "phase2":      REPO / "docs" / "dev_log_phase2.md",
+    "phase1":      REPO / "docs" / "dev_log.md",
+    "fallback":    REPO / "docs" / "dev_log_phase2_3.md",
+}
+
+# (regex, log_key) — 同時用於 Bash command 和 file path 匹配
+ROUTING_RULES = [
+    (r"v32",                          "phase3c_v32"),
+    (r"v31",                          "phase3c_v31"),
+    (r"train_dppo|evaluate_rhc",      "phase3b"),
+    (r"train_diffusion",              "phase3a"),
+    (r"collect_data",                 "phase2"),
+    (r"ppo_expert|check_device",      "phase1"),
+]
+
+
+def route_log(text: str) -> Path:
+    """根據 command 或 file path 中的關鍵字決定寫入哪個 log 檔案。"""
+    for pattern, key in ROUTING_RULES:
+        if re.search(pattern, text, re.IGNORECASE):
+            return LOG_FILES[key]
+    return LOG_FILES["fallback"]
+
 
 # ── Bash 監控清單 ──────────────────────────────────────────────
 BASH_PATTERNS = [
     (r"check_device",        "Device Check"),
+    (r"train_dppo_v32",      "DPPO v3.2 Training — Started"),
+    (r"train_dppo_v31",      "DPPO v3.1 Training — Started"),
     (r"train_dppo",          "DPPO Training — Started"),
+    (r"train_diffusion_v32", "Diffusion v3.2 Training — Started"),
+    (r"train_diffusion_v31", "Diffusion v3.1 Training — Started"),
     (r"train_diffusion",     "Diffusion Training — Started"),
+    (r"evaluate_rhc_v32",    "RHC v3.2 Evaluation"),
+    (r"evaluate_rhc_v31",    "RHC v3.1 Evaluation"),
     (r"evaluate_rhc",        "RHC Evaluation"),
     (r"collect_data",        "Expert Data Collection"),
     (r"evaluate_ppo_expert", "PPO Expert Evaluation"),
@@ -68,9 +104,9 @@ def truncate(text: str, limit: int) -> str:
     return text or "(empty)"
 
 
-def append_log(entry: str):
+def append_log(entry: str, log_path: Path):
     try:
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(entry)
     except Exception:
         pass  # Never crash Claude Code
@@ -106,7 +142,7 @@ def handle_bash(data: dict):
         f"**Command:** `{command.strip()}`\n\n"
         f"**Output:**\n```\n{output}\n```\n"
     )
-    append_log(entry)
+    append_log(entry, route_log(command))
 
 
 # ── Edit handler ──────────────────────────────────────────────
@@ -144,7 +180,7 @@ def handle_edit(data: dict):
         f"**Before:**\n```{lang}\n{old_display}\n```\n\n"
         f"**After:**\n```{lang}\n{new_display}\n```\n"
     )
-    append_log(entry)
+    append_log(entry, route_log(file_path))
 
 
 # ── Write handler ─────────────────────────────────────────────
@@ -178,7 +214,7 @@ def handle_write(data: dict):
         f"**File:** `{rel}`\n\n"
         f"**Content:**\n```{lang}\n{snippet}\n```\n"
     )
-    append_log(entry)
+    append_log(entry, route_log(file_path))
 
 
 # ── Entry point ───────────────────────────────────────────────

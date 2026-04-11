@@ -66,3 +66,74 @@
 | Value net lag | VLoss > 5 至 update ~150 | value warmup (凍結 policy 50 updates) |
 | IMU 未歸一化 | v3.2 supervised RMSE 1.985m | gyro/2.0, sf 中心化後/5.0 |
 | 推論速度 14Hz | DDIM 10步 = 74ms, 無法達 50Hz | Phase 3d OneDP 單步蒸餾 |
+
+---
+
+## §18 — Phase 3b Run 5：P5 假設驗證（2026-04-11）
+
+**目標：** 驗證 P5 假設（DR-aug 特徵模糊是 Run 4 RMSE 0.409m 的根因）。
+**策略：** 路線 B — 原始 pretrained（無 DR-aug）+ Run 4 改良配置，無需等待 v3.2 pipeline。
+
+### Hyperparameter Diff（vs Run 4）
+
+| 參數 | Run 4 | Run 5 | 理由 |
+|------|-------|-------|------|
+| pretrained | `20260405_044808`（DR-aug Re-run 2） | `20260402_032701`（原始，無 DR-aug） | 驗證 P5：特徵更尖銳 → DPPO 梯度更有方向性 |
+| advantage_beta | 0.05 | 0.05（不變） | — |
+| value_warmup_updates | 50 | 50（不變） | — |
+| vloss_best_threshold | 500 | 500（不變） | — |
+| script | train_dppo.py | train_dppo.py（不變） | 無 IMU，原始架構 |
+
+### 預期行為
+
+- VLoss 應在 u50 前降至 < 500（Run 4 u50 時 VLoss = 17，歷史最佳）
+- Reward 應維持 0.47–0.56 穩定範圍
+- Best ckpt RMSE 目標：**< 0.168m**（超越 Run 2）
+- 若成立：原始 pretrained 的尖銳特徵空間 + Run 4 配置 = 最優組合
+- 若不成立（RMSE ≈ 0.4m+）：DR-aug 不是主因，v3.2 IMU 歸一化修復是主要突破口
+
+### 判斷點
+
+u155 附近的 best ckpt 評估結果：
+- **成功：** RMSE < 0.168m → P5 假設成立
+- **中性：** RMSE 0.168–0.268m → 部分改善，繼續 v3.2 路線
+- **失敗：** RMSE > 0.268m → P5 假設否定，優先 v3.2 IMU 修復
+
+**Status:** Starting — 2026-04-11
+
+---
+<!-- auto-log 2026-04-11 17:41:39 bash -->
+### [Auto-Log] 2026-04-11 17:41:39 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && nohup python -m scripts.train_dppo \
+    --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt \
+    --total-updates 500 \
+    > logs/train_dppo_run5_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+echo "PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:42:00 bash -->
+### [Auto-Log] 2026-04-11 17:42:00 — DPPO Training — Started
+
+**Command:** `ls c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/ | grep "train_dppo_run5" | sort -r | head -2`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:42:12 bash -->
+### [Auto-Log] 2026-04-11 17:42:12 — DPPO Training — Started
+
+**Command:** `sleep 10 && tail -20 c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/train_dppo_run5_20260411_174138.log`
+
+**Output:**
+```
+(empty)
+```

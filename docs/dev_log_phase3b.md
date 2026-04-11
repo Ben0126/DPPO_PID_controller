@@ -280,3 +280,159 @@ GPU 0: NVIDIA GeForce RTX 3090
 
 ---
 
+
+---
+<!-- auto-log 2026-04-11 17:42:57 bash -->
+### [Auto-Log] 2026-04-11 17:42:57 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && timeout 30 python -m scripts.train_dppo \
+    --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt \
+    --total-updates 500 2>&1 | head -20`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:43:09 bash -->
+### [Auto-Log] 2026-04-11 17:43:09 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.train_dppo --help 2>&1 | head -20`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:43:53 bash -->
+### [Auto-Log] 2026-04-11 17:43:53 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && LOG=logs/train_dppo_run5_$(date +%Y%m%d_%H%M%S).log && nohup python -m scripts.train_dppo --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt --total-updates 500 > "$LOG" 2>&1 & echo "PID=$! LOG=$LOG"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:44:22 bash -->
+### [Auto-Log] 2026-04-11 17:44:22 — DPPO Training — Started
+
+**Command:** `sleep 25 && ls -t c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/ | grep "train_dppo_run5" | head -3 && echo "---" && ls -t c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/checkpoints/diffusion_policy/ | grep "^dppo_" | head -5`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:44:25 bash -->
+### [Auto-Log] 2026-04-11 17:44:25 — DPPO Training — Started
+
+**Command:** `cat c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/train_dppo_run5_20260411_174353.log | head -30`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:44:28 bash -->
+### [Auto-Log] 2026-04-11 17:44:28 — DPPO Training — Started
+
+**Command:** `ls -la c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/ | grep "train_dppo_run5" && wc -c c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/train_dppo_run5_20260411_174353.log`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:44:35 bash -->
+### [Auto-Log] 2026-04-11 17:44:35 — DPPO Training — Started
+
+**Command:** `ps aux 2>/dev/null | grep train_dppo | grep -v grep | head -5`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:45:50 bash -->
+### [Auto-Log] 2026-04-11 17:45:50 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.train_dppo --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt --total-updates 500 2>&1 &
+sleep 45
+jobs -l`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:52:30 bash -->
+### [Auto-Log] 2026-04-11 17:52:30 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.train_dppo --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt --total-updates 500 2>&1 | head -50 &
+sleep 50
+cat /proc/$!/fd/1 2>/dev/null || true
+wait $!`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:54:35 bash -->
+### [Auto-Log] 2026-04-11 17:54:35 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.train_dppo --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt --total-updates 500 2>&1
+echo "EXIT_CODE: $?"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:56:44 bash -->
+### [Auto-Log] 2026-04-11 17:56:44 — DPPO Training — Started
+
+**Command:** `grep -n "print\|logging\|log_file\|FileHandler\|stdout" c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/scripts/train_dppo.py | head -20`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:57:58 bash -->
+### [Auto-Log] 2026-04-11 17:57:58 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.train_dppo --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt --total-updates 500 > /tmp/run5_test.log 2>&1 &
+echo "PID=$!"
+sleep 60
+echo "--- log so far ---"
+cat /tmp/run5_test.log | head -50`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-11 17:58:49 bash -->
+### [Auto-Log] 2026-04-11 17:58:49 — DPPO Training — Started
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -u -m scripts.train_dppo --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt --total-updates 500 2>&1 | tee /tmp/run5_tee.log &
+sleep 30 && echo "=== tee log ===" && cat /tmp/run5_tee.log | head -30`
+
+**Output:**
+```
+(empty)
+```
