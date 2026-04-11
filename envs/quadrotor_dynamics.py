@@ -150,6 +150,10 @@ class QuadrotorDynamics:
         # Motor state (with first-order lag)
         self.motor_thrust = np.zeros(4)
 
+        # Cached force/rotation for specific-force accessor (v3.2 IMU)
+        self._last_force_world = np.zeros(3)
+        self._last_R = np.eye(3)
+
         self.reset()
 
     def reset(self, position: np.ndarray = None, velocity: np.ndarray = None):
@@ -159,6 +163,8 @@ class QuadrotorDynamics:
         self.velocity = velocity if velocity is not None else np.zeros(3)
         self.ang_velocity = np.zeros(3)
         self.motor_thrust = np.zeros(4)
+        self._last_force_world = np.zeros(3)
+        self._last_R = np.eye(3)
 
     @property
     def state(self) -> np.ndarray:
@@ -290,6 +296,12 @@ class QuadrotorDynamics:
         if disturbance_torque is not None:
             torque_body = torque_body + disturbance_torque
 
+        # Cache for specific-force accessor (v3.2 IMU).
+        # Snapshot BEFORE the RK4 integration so the reported force matches
+        # the rotation frame the drone was actually in during this sub-step.
+        self._last_force_world = force_world.copy()
+        self._last_R = self.get_rotation_matrix()
+
         # RK4 integration
         s = self.state
         dt = self.dt
@@ -307,3 +319,24 @@ class QuadrotorDynamics:
     def get_hover_thrust(self) -> float:
         """Compute per-motor thrust needed to hover."""
         return self.params.mass * self.params.gravity / 4.0
+
+    def get_specific_force_body(self) -> np.ndarray:
+        """
+        Body-frame specific force — what an ideal accelerometer rigidly
+        mounted to the drone would report.
+
+        Definition: (force - gravity) / mass, rotated into body frame.
+        Excludes gravity (the sensor cannot feel gravity in free-fall);
+        includes thrust and drag reaction forces.
+
+        At perfect hover, thrust exactly counteracts gravity, so
+        the raw force is zero and the specific force equals -gravity
+        in body-down direction, i.e. [0, 0, -g] in NED body frame.
+
+        Returns:
+            (3,) specific force in body frame [ax, ay, az]
+        """
+        p = self.params
+        gravity_world = np.array([0.0, 0.0, p.mass * p.gravity])
+        non_grav_force = self._last_force_world - gravity_world
+        return (self._last_R.T @ non_grav_force) / p.mass

@@ -189,23 +189,29 @@ def train(args):
     writer = SummaryWriter(log_dir)
 
     # Training parameters
-    n_rollout_steps = dppo_cfg['n_rollout_steps']
-    n_epochs = dppo_cfg['n_epochs']
-    beta = dppo_cfg['advantage_beta']
-    gamma = dppo_cfg['gamma']
-    gae_lambda = dppo_cfg['gae_lambda']
-    total_updates = args.total_updates
+    n_rollout_steps      = dppo_cfg['n_rollout_steps']
+    n_epochs             = dppo_cfg['n_epochs']
+    beta                 = dppo_cfg['advantage_beta']
+    gamma                = dppo_cfg['gamma']
+    gae_lambda           = dppo_cfg['gae_lambda']
+    value_warmup_updates = dppo_cfg.get('value_warmup_updates', 0)
+    vloss_best_threshold = dppo_cfg.get('vloss_best_threshold', float('inf'))
+    total_updates        = args.total_updates
+
+    MINI_BATCH = 256   # safe for 24 GB VRAM
 
     print(f"\n{'='*60}")
     print(f"DPPO Fine-Tuning")
-    print(f"Total updates: {total_updates}")
-    print(f"Rollout steps: {n_rollout_steps}")
+    print(f"Total updates: {total_updates} | Rollout steps: {n_rollout_steps}")
     print(f"Advantage beta: {beta}")
+    print(f"Value warm-up: {value_warmup_updates} updates | VLoss best-ckpt threshold: {vloss_best_threshold}")
     print(f"{'='*60}\n")
 
     best_reward = -float('inf')
 
     for update in range(total_updates):
+        in_warmup = update < value_warmup_updates
+
         # Collect rollout
         rollout = collect_rollout(
             env, policy, value_net, policy.vision_encoder,
@@ -221,48 +227,71 @@ def train(args):
             rollout['dones'], gamma, gae_lambda,
         )
 
-        # Convert to tensors
-        img_stacks = torch.FloatTensor(np.array(rollout['image_stacks'])).to(device)
-        action_seqs = torch.FloatTensor(np.array(rollout['action_seqs'])).to(device)
-        advantages_t = torch.FloatTensor(advantages).to(device)
-        returns_t = torch.FloatTensor(returns).to(device)
+        # Keep rollout data on CPU; slice mini-batches onto GPU to avoid OOM.
+        img_stacks_cpu  = torch.FloatTensor(np.array(rollout['image_stacks']))
+        action_seqs_cpu = torch.FloatTensor(np.array(rollout['action_seqs']))
+        advantages_t    = torch.FloatTensor(advantages)
+        returns_t       = torch.FloatTensor(returns)
 
         # Normalize advantages
         advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std() + 1e-8)
 
-        # Update policy with DPPO loss
-        policy.train()
-        for _ in range(n_epochs):
-            loss = policy.compute_weighted_loss(
-                img_stacks, action_seqs, advantages_t, beta=beta
-            )
-            policy_optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-            policy_optimizer.step()
+        N = len(advantages_t)
 
-        # Update value network
-        with torch.no_grad():
-            vis_features = policy.vision_encoder(img_stacks)
+        # Value network update — always runs (warm-up or joint)
+        value_loss = torch.tensor(0.0)
         for _ in range(n_epochs):
-            value_pred = value_net(vis_features).squeeze()
-            value_loss = nn.functional.mse_loss(value_pred, returns_t)
-            value_optimizer.zero_grad()
-            value_loss.backward()
-            value_optimizer.step()
+            idx = torch.randperm(N)
+            for start in range(0, N, MINI_BATCH):
+                mb = idx[start:start + MINI_BATCH]
+                with torch.no_grad():
+                    vis_feat = policy.vision_encoder(
+                        img_stacks_cpu[mb].to(device)
+                    )
+                vp = value_net(vis_feat).squeeze()
+                vl = nn.functional.mse_loss(vp, returns_t[mb].to(device))
+                value_optimizer.zero_grad()
+                vl.backward()
+                value_optimizer.step()
+                value_loss = vl.detach()
+
+        # Policy update — skipped during warm-up
+        loss = torch.tensor(0.0)
+        if not in_warmup:
+            policy.train()
+            for _ in range(n_epochs):
+                idx = torch.randperm(N)
+                for start in range(0, N, MINI_BATCH):
+                    mb = idx[start:start + MINI_BATCH]
+                    mb_loss = policy.compute_weighted_loss(
+                        img_stacks_cpu[mb].to(device),
+                        action_seqs_cpu[mb].to(device),
+                        advantages_t[mb].to(device),
+                        beta=beta,
+                    )
+                    policy_optimizer.zero_grad()
+                    mb_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+                    policy_optimizer.step()
+                    loss = mb_loss.detach()
 
         # Logging
         mean_reward = np.mean(rollout['rewards'])
-        writer.add_scalar('dppo/mean_reward', mean_reward, update)
-        writer.add_scalar('dppo/policy_loss', loss.item(), update)
-        writer.add_scalar('dppo/value_loss', value_loss.item(), update)
+        writer.add_scalar('dppo/mean_reward', mean_reward,       update)
+        writer.add_scalar('dppo/policy_loss', loss.item(),       update)
+        writer.add_scalar('dppo/value_loss',  value_loss.item(), update)
+        writer.add_scalar('dppo/warmup',      int(in_warmup),    update)
 
-        print(f"Update {update+1:>4}/{total_updates} | "
-              f"Mean Reward: {mean_reward:.4f} | "
-              f"Policy Loss: {loss.item():.6f} | "
-              f"Value Loss: {value_loss.item():.6f}")
+        warmup_tag = " [WARMUP]" if in_warmup else ""
+        print(f"Update {update+1:>4}/{total_updates}{warmup_tag} | "
+              f"Reward: {mean_reward:.4f} | "
+              f"Loss: {loss.item():.6f} | "
+              f"VLoss: {value_loss.item():.6f}")
 
-        if mean_reward > best_reward:
+        # Save best ckpt only after VLoss is below threshold (advantage estimates reliable)
+        if (not in_warmup
+                and value_loss.item() < vloss_best_threshold
+                and mean_reward > best_reward):
             best_reward = mean_reward
             policy.save(os.path.join(save_dir, "best_dppo_model.pt"))
             torch.save(value_net.state_dict(),

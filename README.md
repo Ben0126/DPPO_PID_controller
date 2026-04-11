@@ -71,7 +71,7 @@ PPO's Gaussian output assumes a unimodal action distribution. In complex flight 
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Architecture v3.1 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth)
+### Architecture v3.1 / v3.2 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth)
 
 ```
 ┌──────────────────────────────┐  ┌──────────────────────────────┐
@@ -120,16 +120,23 @@ Phase 1: PPO Expert + 6-DOF Environment
 Phase 2: FPV Data Collection
          [✓]  Done — expert_demos_dr.h5 (1000 ep, 500k steps, DR enabled)
          [✓]  v3.1 re-collection complete → expert_demos_v31.h5 (4.04GB, IMU+depth)
+         [✓]  v3.2 re-collection complete → expert_demos_v32.h5 (4.0GB, physics IMU)
+              Physics-based specific force replaces finite-difference (2026-04-10)
 
 Phase 3: Vision Diffusion Policy
    3a    [✓]  Supervised pre-training Re-run 2 complete (DR-aug, 500 epochs)
               checkpoints/diffusion_policy/20260405_044808/best_model.pt
    3a-v31[✓]  v3.1 supervised pre-training complete (500 epochs, best loss -1.4415)
               checkpoints/diffusion_policy/v31_20260406_185128/best_model.pt
-   3b    [✓]  D²PPO Run 2 (dppo_20260404_044552) — best u11, RMSE 0.145m, 50/50 crashes
-   3b    [✓]  D²PPO Run 3 (dppo_20260405_155057) — best u34, RMSE 0.450m, 50/50 crashes
-   3c    [🔄] DPPO v3.1 fine-tuning in progress (train_dppo_v31_20260408_024533)
-              Initial reward +0.631/step — higher than any prior DPPO run start
+   3a-v32[✓]  v3.2 supervised pre-training complete (500 epochs, best loss -1.437)
+              checkpoints/diffusion_policy/v32_20260410_120042/best_model.pt
+   3b    [✓]  D²PPO Run 2 (dppo_20260404_044552) — best u11, RMSE 0.168m, 50/50 crashes
+   3b    [✓]  D²PPO Run 3 (dppo_20260405_155057) — best u34, RMSE 0.488m, 50/50 crashes
+   3b    [✓]  D²PPO Run 4 (dppo_20260410_045335) — best u155, RMSE 0.409m, 50/50 crashes
+              DR-aug pretrained; value loss converged (VLoss=17), reward stable, but RMSE worse
+   3c    [✗]  DPPO v3.1 Run 1+2 ABANDONED — RMSE 0.518/0.466m, finite-diff IMU covariate shift
+   3c-v32[🔄] DPPO v3.2 Run 1 IN PROGRESS (dppo_v32_20260411_114141)
+              Physics-based IMU (get_specific_force_body); covariate shift ax: 23×→1.4×
    3d    [ ]  OneDP single-step distillation (solve deployment latency)
 
 Phase 4: Evaluation
@@ -141,10 +148,10 @@ Phase 5: Hardware Deployment
          [ ]  Real flight testing (with wind disturbance)
 ```
 
-**Current status:** Phase 3c DPPO v3.1 fine-tuning in progress (`train_dppo_v31_20260408_024533`).
-Baseline DPPO (Runs 1-3) ceiling confirmed at RMSE 0.145m, 50/50 crashes — value net lag causes early collapse.
-v3.1 architecture (IMU Late Fusion + FCN Depth) fully implemented and training.
-Initial reward (+0.631/step) already exceeds all prior run starting points.
+**Current status:** Phase 3c v3.2 DPPO Run 1 in progress (`dppo_v32_20260411_114141`).
+v3.1 IMU (finite-difference) abandoned 2026-04-10 after 2 failed runs (RMSE 0.466–0.518m). Root cause confirmed: finite-diff `v_body` amplifies Coriolis noise ≥20× during RL rollouts.
+v3.2 replaces with physics-based `get_specific_force_body()`: covariate shift ax 23×→1.4×, ay 16×→1.2×.
+Run 4 baseline (no-IMU + improved training) reached RMSE 0.409m — training quality best so far (VLoss=17, reward stable), but DR-aug pretrained produced blurrier feature space than original pretrained, explaining the RMSE regression vs Run 2 (0.168m).
 See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for detailed training analysis.
 
 ---
@@ -232,13 +239,16 @@ DPPO_PID_controller/
 │
 ├── scripts/
 │   ├── train_ppo_expert.py      # Phase 1
-│   ├── collect_data.py          # Phase 2 (--v31 flag for IMU+depth)
+│   ├── collect_data.py          # Phase 2 (--v31 / --v32 flags for IMU+depth)
 │   ├── train_diffusion.py       # Phase 3a (baseline)
-│   ├── train_diffusion_v31.py   # Phase 3a v3.1 (IMU + depth aux)
+│   ├── train_diffusion_v31.py   # Phase 3a v3.1 (finite-diff IMU — historical)
+│   ├── train_diffusion_v32.py   # Phase 3a v3.2 (physics IMU — current)
 │   ├── train_dppo.py            # Phase 3b (baseline DPPO)
-│   ├── train_dppo_v31.py        # Phase 3c (DPPO v3.1)
+│   ├── train_dppo_v31.py        # Phase 3c v3.1 (abandoned — finite-diff IMU)
+│   ├── train_dppo_v32.py        # Phase 3c v3.2 (current — physics IMU)
 │   ├── evaluate_rhc.py          # Phase 4 (baseline)
-│   └── evaluate_rhc_v31.py      # Phase 4 v3.1 (with IMU input)
+│   ├── evaluate_rhc_v31.py      # Phase 4 v3.1 (historical)
+│   └── evaluate_rhc_v32.py      # Phase 4 v3.2 (current)
 │
 ├── docs/
 │   ├── dev_log.md               # Training diagnostic log (research journal)
@@ -290,13 +300,13 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 ## Evaluation Metrics / 評估指標
 
-| Metric | Current | Target | Conference |
-|--------|---------|--------|-----------|
-| Position RMSE | 0.069m (PPO) / 0.145m (DPPO Run 2) / 0.453m (v3.1 supervised) | **<0.145m (Phase 3c goal)** | ICRA |
-| Crash Rate | 0% (PPO) / 100% (all diffusion runs to date) | **<50% (Phase 3c) → <10% (Phase 4)** | CoRL |
-| Inference Latency | ~73ms (10-step DDIM v3.1) | **<20ms (after OneDP)** | CoRL/ICRA |
-| Control Frequency | 12.5Hz | **>60Hz (after OneDP)** | ICRA |
-| Diffusion/PPO Ratio | 15.84% (v3.1 supervised) | >80% | CoRL |
+| Metric | Current Best | Latest Run | Target | Conference |
+|--------|-------------|------------|--------|-----------|
+| Position RMSE | 0.069m (PPO) / **0.168m** (DPPO Run 2) | 0.409m (Run 4, DR-aug pretrained) | **<0.168m (Phase 3c goal)** | ICRA |
+| Crash Rate | 0% (PPO) / 100% (all diffusion runs to date) | 50/50 (Run 4) | **<50% (Phase 3c) → <10% (Phase 4)** | CoRL |
+| Inference Latency | ~94ms (10-step DDIM) | — | **<20ms (after OneDP)** | CoRL/ICRA |
+| Control Frequency | 12.5Hz | — | **>60Hz (after OneDP)** | ICRA |
+| IMU covariate shift (ax std ratio) | 23× (v3.1 finite-diff) | **1.4×** (v3.2 physics) | <2× | — |
 
 ---
 

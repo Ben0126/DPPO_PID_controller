@@ -43,14 +43,16 @@ training:
 # DPPO fine-tuning (Phase 3b)
 dppo:
   enabled: false                  # set true for RL fine-tuning
-  advantage_beta: 0.15            # Run3: 0.1→0.15 (max weight ~1.57×) — stronger signal from DR-trained encoder
+  advantage_beta: 0.05            # Run2(v3.1): 0.15→0.05 — max weight exp(0.15)≈1.16×; reduces noisy-advantage amplification
   gamma: 0.99
   gae_lambda: 0.95
   n_rollout_steps: 4096           # unchanged — stable advantage estimates
   n_epochs: 3                     # unchanged — conservative per-update change
   learning_rate: 0.000005         # unchanged — 5e-6 conservative fine-tuning
-  value_hidden_dim: 256
+  value_hidden_dim: 512           # Run2(v3.1): 256→512 — larger capacity for 288D input
   value_lr: 0.0003                # unchanged
+  value_warmup_updates: 50        # Run2(v3.1): freeze policy for first N updates while value net converges
+  vloss_best_threshold: 500.0     # Run2(v3.1): only save best ckpt when VLoss < this value
 
 # Logging
 logging:

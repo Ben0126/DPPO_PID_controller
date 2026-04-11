@@ -232,6 +232,26 @@ class QuadrotorEnv(gym.Env):
 
         return obs, total_reward, terminated, truncated, info
 
+    def get_imu(self) -> np.ndarray:
+        """
+        v3.2 IMU signal — [gyro (3), specific_force (3)] in body frame.
+
+        Replaces the v3.1 finite-difference pseudo-IMU, which was unstable
+        under RL rollouts (see docs/dev_log_phase2_3.md §13.4). The values
+        returned here come directly from the dynamics state and cached
+        force snapshot, so their statistics are identical whether generated
+        by the PPO expert during data collection or by a mid-training
+        diffusion policy during RL fine-tuning.
+
+        Returns:
+            (6,) float32: [wx, wy, wz, ax, ay, az]
+                - wx,wy,wz: body-frame angular velocity (gyroscope)
+                - ax,ay,az: body-frame specific force (accelerometer)
+        """
+        gyro = self.dynamics.ang_velocity.astype(np.float32)
+        spec_force = self.dynamics.get_specific_force_body().astype(np.float32)
+        return np.concatenate([gyro, spec_force])
+
     def _get_observation(self) -> np.ndarray:
         """
         Compute 15D observation vector.

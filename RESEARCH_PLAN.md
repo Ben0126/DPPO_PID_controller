@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.4
-**Date:** 2026-04-08
-**Status:** Phase 3c DPPO v3.1 in progress (`train_dppo_v31_20260408_024533`); v3.1 data + supervised pre-training complete; baseline DPPO ceiling confirmed at RMSE 0.145m
+**Version:** 3.5
+**Date:** 2026-04-11
+**Status:** Phase 3c v3.2 DPPO Run 1 in progress (`dppo_v32_20260411_114141`); v3.1 finite-diff IMU abandoned; physics-based IMU covariate shift ax 23×→1.4×; baseline DPPO ceiling at RMSE 0.168m (Run 2)
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -30,12 +30,17 @@ Phase 1: 6-DOF Env + PPO Expert   ✓ DONE (Run 6: RMSE 0.069m, 0 crashes)
     ↓
 Phase 2: FPV Data Collection       ✓ DONE (expert_demos_dr.h5: 1000 ep, 500k steps, DR A+B)
     ↓                              ✓ v3.1 re-collect DONE (expert_demos_v31.h5: 4.04GB, IMU+depth)
+    ↓                              ✓ v3.2 re-collect DONE (expert_demos_v32.h5: 4.0GB, physics IMU)
 Phase 3a: CNN Baseline             ✓ Re-run 2 complete (20260405_044808, best loss converged)
     ↓      v3.1 supervised         ✓ DONE (v31_20260406_185128, best loss -1.4415, 500 epochs)
-Phase 3b: D²PPO Dispersive Loss    ✓ Run 2 (u11, 0.145m) + Run 3 (u34, 0.450m) — both 50/50 crashes
+    ↓      v3.2 supervised         ✓ DONE (v32_20260410_120042, best loss -1.437, 500 epochs)
+Phase 3b: D²PPO Dispersive Loss    ✓ Run 2 (u11, 0.168m) + Run 3 (u34, 0.488m) — both 50/50 crashes
     ↓       Root cause: value net lag; policy collapses before advantage estimates converge
-Phase 3c: DPPO v3.1 RL Fine-tuning   🔄 IN PROGRESS (train_dppo_v31_20260408_024533)
-    ↓       Initial reward +0.631/step — best of all DPPO runs; value loss converging fast
+    ↓      Run 4 (u155, 0.409m) — improved training (VLoss=17) but DR-aug pretrained hurt RMSE
+Phase 3c: DPPO v3.1 RL Fine-tuning   ✗ ABANDONED — 2 runs (RMSE 0.518/0.466m), finite-diff IMU
+    ↓       Root cause: finite-diff accel = R^T a_world − ω×v_body; Coriolis term 20× noise in RL
+    ↓      DPPO v3.2 RL Fine-tuning  🔄 IN PROGRESS (dppo_v32_20260411_114141)
+    ↓       Physics IMU: covariate shift ax 23×→1.4×, ay 16×→1.2×
     ↓
 Phase 3d: OneDP Single-Step Distillation
     ↓
@@ -238,9 +243,13 @@ data/expert_demos_v31.h5
 ```
 
 **IMU alignment:** Control loop runs at 50 Hz; IMU data is aligned at the same rate.
-- **ω (gyro):** state[12:14] (angular velocity, already available in state vector)
-- **a (accel):** computed via first-order finite difference of linear velocity, or directly from
-  the quadrotor dynamics model (`QuadrotorDynamics.step()` returns body-frame acceleration)
+- **ω (gyro):** `dynamics.ang_velocity` (body-frame angular velocity, 3D)
+- **a (specific force):** `dynamics.get_specific_force_body()` → `R^T @ (force_world − gravity_world) / mass`
+  — what a body-mounted accelerometer physically measures; does NOT include gravity in free-fall.
+  **v3.2 change (2026-04-10):** replaced the v3.1 finite-difference `(v_body[t] - v_body[t-1])/dt`
+  which mathematically equals `R^T a_world − ω×v_body`. The Coriolis-like term `ω×v_body` amplifies
+  20× during unstable RL rollouts, causing catastrophic distribution shift between Phase 2 collection
+  and Phase 3c rollout. Physics-based specific force drops this to 1.3×.
 
 **Depth map rendering:** requires `QuadrotorVisualEnv` modification to output a per-pixel depth
 channel alongside the RGB image. In the synthetic environment depth can be derived analytically
@@ -581,14 +590,24 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - Option B GPU augmentation replacing PIL ColorJitter (9× speedup)
 - Phase 3b conservative HP: β=0.1, lr=5e-6, n_rollout=4096
 
-**v3.1 (Phase 3c — 🔄 DPPO fine-tuning in progress):**
+**v3.1 (Phase 3c — ✗ ABANDONED 2026-04-10):**
 - Sensing: vision-only → IMU Late Fusion (6D IMU → 32D MLP → cat with 256D vision feature → 288D global_cond)
-- Regularisation: dispersive loss only → dispersive + FCN depth auxiliary (λ_depth=0.1, training only)
-- cond_dim: 384 → 416 (288D global_cond + 128D time embed)
-- New files: `models/vision_dppo_v31.py`, `scripts/train_diffusion_v31.py`, `scripts/train_dppo_v31.py`
-- Deployment: FCN decoder pruned via `save_deployable()` before ONNX export; OneDP latency target unchanged (<30ms)
-- Inference: 10-step DDIM → OneDP single-step distillation
-- Baseline comparison: add BC-LSTM, VTD3 for fair ablation
+- IMU source: finite-difference `(v_body[t] - v_body[t-1])/dt` — FLAWED: includes Coriolis `ω×v_body` term
+- Failed: 2 DPPO runs RMSE 0.518/0.466m vs 0.268m no-IMU supervised baseline
+- Failure confirmed: ax std ratio expert/perturbed = 23×, ay = 16× (v3.2 drops to 1.4×/1.2×)
+- Files retained for historical reproduction: `scripts/train_diffusion_v31.py`, `scripts/train_dppo_v31.py`
+
+**v3.2 (Phase 3c — 🔄 DPPO Run 1 in progress 2026-04-11):**
+- IMU source: `QuadrotorDynamics.get_specific_force_body()` → `R^T @ (F_world − mg) / m`
+  Gyro: `dynamics.ang_velocity`; exposed via `QuadrotorEnv.get_imu()` single call point
+- Same architecture as v3.1: VisionDPPOv31, 288D global_cond, IMUEncoder MLP(6→64→32)
+- Same DPPO hyperparameters as v3.1 Run 2: β=0.05, value_hidden_dim=512, warm-up 50, vloss_threshold 500
+- Distribution-shift improvement: ax 23×→1.4×, ay 16×→1.2× (validated before DPPO launch)
+- New files: `scripts/train_diffusion_v32.py`, `scripts/train_dppo_v32.py`, `scripts/evaluate_rhc_v32.py`
+- Data: `data/expert_demos_v32.h5` (4.0 GB, collected 2026-04-10)
+- Supervised pretraining complete: best loss -1.437 (vs v3.1 -1.4415 — essentially identical)
+- Known issue: supervised RMSE 1.985m (IMU normalization gap — specific_force ≈ −9.81 m/s² not centered)
+  DPPO Run 1 monitoring whether value net can adapt; fix ready if needed
 
 **Long-term (Phase 5):**
 - Encoder: CNN → Pretrained ViT-Small + privileged state decoder head
@@ -621,6 +640,8 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - [x] `_render_depth()` added to `QuadrotorVisualEnv` (v3.1 geometry-based ray casting)
 - [x] `collect_data.py --v31` flag implemented (imu_data + depth_maps fields)
 - [x] v3.1 data collection → `data/expert_demos_v31.h5` (4.04GB, 2026-04-06)
+- [x] `collect_data.py --v32` flag — physics IMU via `env.unwrapped.get_imu()`, no finite-diff
+- [x] v3.2 data collection → `data/expert_demos_v32.h5` (4.0GB, 2026-04-10)
 
 ### Phase 3: Diffusion Policy
 
@@ -644,7 +665,15 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - [x] Architecture v3.1: `configs/diffusion_policy.yaml` v31 block (imu_feature_dim, lambda_depth)
 - [x] numpy memmap cache `data/v31_mmap/` — 46ms/batch (117× speedup over HDF5 lazy-read)
 - [x] Phase 3a v3.1 supervised pre-training complete (best loss -1.4415, 2026-04-06~08)
-- [🔄] Phase 3c DPPO v3.1 fine-tuning in progress (`train_dppo_v31_20260408_024533`)
+- [x] `QuadrotorDynamics.get_specific_force_body()` — physics IMU, caches `_last_force_world`+`_last_R` in `step()`
+- [x] `QuadrotorEnv.get_imu()` — single call point, returns `[gyro(3), specific_force(3)]`
+- [x] Architecture v3.2: `scripts/train_diffusion_v32.py` — DemoDatasetV32 + v32_mmap cache
+- [x] Architecture v3.2: `scripts/train_dppo_v32.py` — physics IMU rollout, imports from v31
+- [x] Architecture v3.2: `scripts/evaluate_rhc_v32.py` — RHC evaluator, physics IMU
+- [x] Phase 3a v3.2 supervised pre-training complete (best loss -1.437, 2026-04-10~11)
+- [x] Distribution-shift validation: ax 23×→1.4×, ay 16×→1.2× (confirmed fix justified)
+- [✗] Phase 3c DPPO v3.1 — 2 runs abandoned (finite-diff IMU covariate shift)
+- [🔄] Phase 3c DPPO v3.2 Run 1 in progress (`dppo_v32_20260411_114141`)
 - [ ] λ_depth ablation (0, 0.01, 0.1, 0.5) + IMU ablation (3 seeds each)
 - [ ] ONNX export script with FCN decoder stripping (`save_deployable()` already implemented)
 - [ ] OneDP single-step distillation

@@ -1,17 +1,18 @@
 """
-Phase 3c v3.1: DPPO Closed-Loop RL Fine-tuning (IMU Late Fusion + Depth Aux)
+Phase 3c v3.2: DPPO Closed-Loop RL Fine-tuning (physics-based IMU)
 
-Fine-tunes a VisionDPPOv31 checkpoint with advantage-weighted diffusion loss
-in a closed-loop RL setting.
+Identical training loop to train_dppo_v31.py — same VisionDPPOv31 model,
+same ValueNetworkV31, same advantage-weighted diffusion loss, same
+value-warm-up + vloss-gated best-checkpoint logic.
 
-Loss per update:
-    L = E[ exp(β × A_norm) × ||ε_θ - ε||² ]
-      + λ_disp  × L_dispersive(vision_feat)
-      + λ_depth × MSE(depth_pred, depth_gt_rollout)
+The only substantive change: the 6-D IMU vector is pulled directly from
+env.unwrapped.get_imu() (body-frame gyro + specific force) instead of
+being estimated by finite-differencing v_body. This removes the
+supervised→RL covariate shift documented in docs/dev_log_phase2_3.md §13.4.
 
 Usage:
-    python -m scripts.train_dppo_v31 \
-        --pretrained checkpoints/diffusion_policy/v31_<timestamp>/best_model.pt
+    python -m scripts.train_dppo_v32 \
+        --pretrained checkpoints/diffusion_policy/v32_<timestamp>/best_model.pt
 """
 
 import os
@@ -29,68 +30,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from envs.quadrotor_visual_env import make_visual_env
 from models.vision_dppo_v31 import VisionDPPOv31
-from models.ppo_expert import RunningMeanStd
-
-
-class ValueNetworkV31(nn.Module):
-    """Value function conditioned on 288D global_cond (vision + IMU)."""
-
-    def __init__(self, global_cond_dim: int = 288, hidden_dim: int = 256):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(global_cond_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    def forward(self, global_cond: torch.Tensor) -> torch.Tensor:
-        return self.net(global_cond)
-
-
-def compute_gae(rewards: List[float], values: List[float],
-                dones: List[bool], gamma: float, gae_lambda: float):
-    """Generalised Advantage Estimation."""
-    advantages  = []
-    returns     = []
-    gae         = 0.0
-    values_ext  = values + [0.0]
-
-    for i in reversed(range(len(rewards))):
-        delta = rewards[i] + gamma * values_ext[i + 1] * (1 - dones[i]) - values_ext[i]
-        gae   = delta + gamma * gae_lambda * (1 - dones[i]) * gae
-        advantages.insert(0, gae)
-        returns.insert(0, gae + values_ext[i])
-
-    return advantages, returns
-
-
-def _get_imu(obs_state: np.ndarray, prev_v_body: np.ndarray,
-             dt: float) -> np.ndarray:
-    """
-    Compute 6D IMU vector from state observation.
-    ω  = state[12:15]  (angular velocity, body frame)
-    a  = finite difference of body-frame linear velocity
-    """
-    omega  = obs_state[12:15]
-    v_body = obs_state[9:12]
-    if prev_v_body is None:
-        accel = np.zeros(3, dtype=np.float32)
-    else:
-        accel = ((v_body - prev_v_body) / dt).astype(np.float32)
-    return np.concatenate([omega, accel]).astype(np.float32)   # (6,)
+from scripts.train_dppo_v31 import ValueNetworkV31, compute_gae
 
 
 def collect_rollout(env, policy, value_net,
                     n_steps: int, T_obs: int, T_action: int,
                     lambda_depth: float, device: torch.device):
     """
-    Collect trajectory using RHC (Receding Horizon Control).
-    Captures image stacks, IMU, depth (if λ_depth > 0), actions, rewards.
+    RHC rollout for v3.2: IMU comes from env.unwrapped.get_imu() directly.
+    No more finite-difference; no more prev_v_body bookkeeping.
     """
-    dt = 1.0 / 50.0   # 50 Hz control loop
-
     rollout = {
         'image_stacks': [], 'action_seqs': [],
         'imu_data':     [], 'depth_maps':  [],
@@ -99,37 +48,31 @@ def collect_rollout(env, policy, value_net,
 
     obs, _       = env.reset()
     image_buffer = [obs['image']] * T_obs
-    prev_v_body  = None
+    base_env     = env.unwrapped   # QuadrotorEnv with get_imu()
 
     steps_collected = 0
 
     while steps_collected < n_steps:
-        # Build image stack
-        img_stack  = np.concatenate(image_buffer[-T_obs:], axis=0)   # (T_obs*C,H,W)
+        img_stack  = np.concatenate(image_buffer[-T_obs:], axis=0)
         img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device)
 
-        # IMU
-        imu_vec    = _get_imu(obs['state'], prev_v_body, dt)
+        # v3.2: physics-based IMU
+        imu_vec    = base_env.get_imu()
         imu_tensor = torch.from_numpy(imu_vec).float().unsqueeze(0).to(device)
-        prev_v_body = obs['state'][9:12].copy()
 
-        # Depth (for λ_depth loss; call renderer on current env state)
         if lambda_depth > 0:
-            depth_frame = env._render_depth()   # (1, H, W) uint8
+            depth_frame = env._render_depth()
         else:
             depth_frame = np.zeros((1, env.image_size, env.image_size), dtype=np.uint8)
 
-        # Value estimate using fused features
         with torch.no_grad():
             global_cond, _ = policy._encode(img_tensor, imu_tensor)
             value = value_net(global_cond).item()
 
-        # Predict action sequence
         with torch.no_grad():
             action_seq = policy.predict_action(img_tensor, imu_tensor)
-            action_seq = action_seq.squeeze(0).cpu().numpy()   # (T_pred, 4)
+            action_seq = action_seq.squeeze(0).cpu().numpy()
 
-        # Execute T_action steps (RHC)
         for a_idx in range(min(T_action, len(action_seq))):
             action = action_seq[a_idx]
 
@@ -149,9 +92,8 @@ def collect_rollout(env, policy, value_net,
             steps_collected += 1
 
             if done:
-                obs, _      = env.reset()
+                obs, _       = env.reset()
                 image_buffer = [obs['image']] * T_obs
-                prev_v_body  = None
                 break
 
             if steps_collected >= n_steps:
@@ -176,13 +118,11 @@ def train(args):
     lambda_dispersive = v31_cfg.get('lambda_dispersive', 0.1)
     lambda_depth      = v31_cfg.get('lambda_depth', 0.1)
 
-    # Environment
     env = make_visual_env(
         config_path=args.quadrotor_config,
         image_size=vision_cfg['image_size'],
     )
 
-    # Policy
     policy = VisionDPPOv31(
         action_dim=action_cfg['action_dim'],
         T_obs=vision_cfg['T_obs'],
@@ -201,7 +141,6 @@ def train(args):
         policy.load(args.pretrained)
         print(f"Loaded pretrained policy: {args.pretrained}")
 
-    # Value network — takes 288D global_cond as input
     global_cond_dim = VisionDPPOv31.GLOBAL_COND_DIM   # 288
     value_net = ValueNetworkV31(
         global_cond_dim=global_cond_dim,
@@ -213,7 +152,6 @@ def train(args):
         )
         print(f"Loaded pretrained value net: {args.pretrained_value}")
 
-    # Optimizers
     policy_optimizer = torch.optim.AdamW(
         policy.parameters(), lr=dppo_cfg['learning_rate']
     )
@@ -221,9 +159,8 @@ def train(args):
         value_net.parameters(), lr=dppo_cfg['value_lr']
     )
 
-    # Logging
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_tag   = f"dppo_v31_{timestamp}"
+    run_tag   = f"dppo_v32_{timestamp}"
     log_dir   = os.path.join(log_cfg['tensorboard_log'], run_tag)
     save_dir  = os.path.join(log_cfg['save_path'],       run_tag)
     os.makedirs(log_dir, exist_ok=True)
@@ -240,7 +177,7 @@ def train(args):
     total_updates         = args.total_updates
 
     print(f"\n{'='*60}")
-    print(f"DPPO v3.1 Fine-Tuning")
+    print(f"DPPO v3.2 Fine-Tuning (physics-based IMU)")
     print(f"Total updates: {total_updates} | Rollout steps: {n_rollout_steps}")
     print(f"β={beta} | λ_disp={lambda_dispersive} | λ_depth={lambda_depth}")
     print(f"Value warm-up: {value_warmup_updates} updates | VLoss best-ckpt threshold: {vloss_best_threshold}")
@@ -251,7 +188,6 @@ def train(args):
     for update in range(total_updates):
         in_warmup = update < value_warmup_updates
 
-        # Collect rollout
         rollout = collect_rollout(
             env, policy, value_net,
             n_steps=n_rollout_steps,
@@ -261,13 +197,11 @@ def train(args):
             device=device,
         )
 
-        # GAE
         advantages, returns = compute_gae(
             rollout['rewards'], rollout['values'],
             rollout['dones'], gamma, gae_lambda,
         )
 
-        # Keep rollout data on CPU; slice mini-batches onto GPU to avoid OOM.
         img_stacks_cpu   = torch.FloatTensor(np.array(rollout['image_stacks']))
         action_seqs_cpu  = torch.FloatTensor(np.array(rollout['action_seqs']))
         imu_data_cpu     = torch.FloatTensor(np.array(rollout['imu_data']))
@@ -275,13 +209,11 @@ def train(args):
         advantages_t     = torch.FloatTensor(advantages)
         returns_t        = torch.FloatTensor(returns)
 
-        # Normalise advantages (on CPU, then keep)
         advantages_t = (advantages_t - advantages_t.mean()) / (advantages_t.std() + 1e-8)
 
         N          = len(advantages_t)
         MINI_BATCH = 256   # safe for 24 GB VRAM
 
-        # Value network update — always runs (warm-up or joint)
         value_loss = torch.tensor(0.0)
         for _ in range(n_epochs):
             idx = torch.randperm(N)
@@ -292,14 +224,13 @@ def train(args):
                         img_stacks_cpu[mb].to(device),
                         imu_data_cpu[mb].to(device),
                     )
-                vp   = value_net(gc).squeeze()
-                vl   = nn.functional.mse_loss(vp, returns_t[mb].to(device))
+                vp = value_net(gc).squeeze()
+                vl = nn.functional.mse_loss(vp, returns_t[mb].to(device))
                 value_optimizer.zero_grad()
                 vl.backward()
                 value_optimizer.step()
                 value_loss = vl.detach()
 
-        # Policy update — skipped during warm-up
         loss    = torch.tensor(0.0)
         metrics = {'loss_diffusion': 0.0, 'loss_dispersive': 0.0, 'loss_depth': 0.0}
         if not in_warmup:
@@ -325,15 +256,14 @@ def train(args):
                     loss    = mb_loss.detach()
                     metrics = mb_m
 
-        # Logging
         mean_reward = np.mean(rollout['rewards'])
-        writer.add_scalar('dppo_v31/mean_reward',        mean_reward,                update)
-        writer.add_scalar('dppo_v31/policy_loss',        loss.item(),                update)
-        writer.add_scalar('dppo_v31/value_loss',         value_loss.item(),          update)
-        writer.add_scalar('dppo_v31/loss_diffusion',     metrics['loss_diffusion'],  update)
-        writer.add_scalar('dppo_v31/loss_dispersive',    metrics['loss_dispersive'], update)
-        writer.add_scalar('dppo_v31/loss_depth',         metrics['loss_depth'],      update)
-        writer.add_scalar('dppo_v31/warmup',             int(in_warmup),             update)
+        writer.add_scalar('dppo_v32/mean_reward',        mean_reward,                update)
+        writer.add_scalar('dppo_v32/policy_loss',        loss.item(),                update)
+        writer.add_scalar('dppo_v32/value_loss',         value_loss.item(),          update)
+        writer.add_scalar('dppo_v32/loss_diffusion',     metrics['loss_diffusion'],  update)
+        writer.add_scalar('dppo_v32/loss_dispersive',    metrics['loss_dispersive'], update)
+        writer.add_scalar('dppo_v32/loss_depth',         metrics['loss_depth'],      update)
+        writer.add_scalar('dppo_v32/warmup',             int(in_warmup),             update)
 
         warmup_tag = " [WARMUP]" if in_warmup else ""
         print(f"Update {update+1:>4}/{total_updates}{warmup_tag} | "
@@ -344,29 +274,28 @@ def train(args):
               f"depth={metrics['loss_depth']:.4f}) | "
               f"VLoss: {value_loss.item():.6f}")
 
-        # Save best ckpt only after VLoss is below threshold (advantage estimates reliable)
         if (not in_warmup
                 and value_loss.item() < vloss_best_threshold
                 and mean_reward > best_reward):
             best_reward = mean_reward
-            policy.save(os.path.join(save_dir, "best_dppo_v31_model.pt"))
+            policy.save(os.path.join(save_dir, "best_dppo_v32_model.pt"))
             torch.save(value_net.state_dict(),
-                       os.path.join(save_dir, "best_value_net_v31.pt"))
+                       os.path.join(save_dir, "best_value_net_v32.pt"))
 
-    policy.save(os.path.join(save_dir, "final_dppo_v31_model.pt"))
+    policy.save(os.path.join(save_dir, "final_dppo_v32_model.pt"))
     policy.save_deployable(os.path.join(save_dir, "deploy_model.pt"))
     torch.save(value_net.state_dict(),
-               os.path.join(save_dir, "final_value_net_v31.pt"))
+               os.path.join(save_dir, "final_value_net_v32.pt"))
     writer.close()
-    print(f"\nDPPO v3.1 training complete! Best reward: {best_reward:.4f}")
+    print(f"\nDPPO v3.2 training complete! Best reward: {best_reward:.4f}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="DPPO v3.1 Fine-Tuning")
+    parser = argparse.ArgumentParser(description="DPPO v3.2 Fine-Tuning")
     parser.add_argument('--config',           type=str, default='configs/diffusion_policy.yaml')
     parser.add_argument('--quadrotor-config', type=str, default='configs/quadrotor.yaml')
     parser.add_argument('--pretrained',       type=str, default=None,
-                        help='Path to pretrained VisionDPPOv31 checkpoint')
+                        help='Path to pretrained VisionDPPOv31 checkpoint (trained on v3.2 data)')
     parser.add_argument('--pretrained-value', type=str, default=None,
                         help='Path to pretrained value net checkpoint')
     parser.add_argument('--total-updates',    type=int, default=500)
