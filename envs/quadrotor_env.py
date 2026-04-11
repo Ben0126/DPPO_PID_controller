@@ -25,6 +25,11 @@ from .quadrotor_dynamics import (
     quaternion_to_rotation_matrix, rotation_matrix_to_6d, get_tilt_angle,
 )
 
+# --- v3.2 IMU normalisation constants ---
+_GYRO_SCALE   = 2.0    # rad/s  典型最大角速度
+_SF_SCALE     = 5.0    # m/s²   除 gravity offset 後的典型比力幅度
+_SF_Z_OFFSET  = -9.81  # m/s²   hover 時 az 的期望值
+
 
 class QuadrotorEnv(gym.Env):
     """
@@ -234,23 +239,28 @@ class QuadrotorEnv(gym.Env):
 
     def get_imu(self) -> np.ndarray:
         """
-        v3.2 IMU signal — [gyro (3), specific_force (3)] in body frame.
+        v3.2 normalized IMU signal — [gyro(3), specific_force_norm(3)].
 
-        Replaces the v3.1 finite-difference pseudo-IMU, which was unstable
-        under RL rollouts (see docs/dev_log_phase2_3.md §13.4). The values
-        returned here come directly from the dynamics state and cached
-        force snapshot, so their statistics are identical whether generated
-        by the PPO expert during data collection or by a mid-training
-        diffusion policy during RL fine-tuning.
+        All channels are scaled to approximately [-1, +1] at normal flight
+        conditions so that IMUEncoder Linear(6, 64) receives zero-mean inputs
+        regardless of the hover gravity offset (az ≈ -9.81 m/s² raw).
+
+        Normalisation constants (module-level):
+            gyro    : divided by _GYRO_SCALE (2 rad/s)
+            sf_x/y  : divided by _SF_SCALE   (5 m/s²)
+            sf_z    : (az - _SF_Z_OFFSET) / _SF_SCALE  → ~0 at hover
 
         Returns:
-            (6,) float32: [wx, wy, wz, ax, ay, az]
-                - wx,wy,wz: body-frame angular velocity (gyroscope)
-                - ax,ay,az: body-frame specific force (accelerometer)
+            (6,) float32: [gyro_x_n, gyro_y_n, gyro_z_n, sfx_n, sfy_n, sfz_n]
         """
-        gyro = self.dynamics.ang_velocity.astype(np.float32)
-        spec_force = self.dynamics.get_specific_force_body().astype(np.float32)
-        return np.concatenate([gyro, spec_force])
+        gyro = self.dynamics.ang_velocity.astype(np.float32) / _GYRO_SCALE
+        sf   = self.dynamics.get_specific_force_body().astype(np.float32)
+        sf_n = np.array([
+            sf[0] / _SF_SCALE,
+            sf[1] / _SF_SCALE,
+            (sf[2] - _SF_Z_OFFSET) / _SF_SCALE,
+        ], dtype=np.float32)
+        return np.concatenate([gyro, sf_n])
 
     def _get_observation(self) -> np.ndarray:
         """

@@ -251,10 +251,16 @@ DPPO_PID_controller/
 │   └── evaluate_rhc_v32.py      # Phase 4 v3.2 (current)
 │
 ├── docs/
-│   ├── dev_log.md               # Training diagnostic log (research journal)
-│   ├── RESEARCH_PLAN.md         # Detailed technical research plan (v3.0)
-│   ├── TOP_CONF_GUIDE.md        # Conference submission guide
-│   └── DIAGNOSTIC_LOG.md        # Legacy diagnostic summary
+│   ├── dev_log.md               # Phase 1 training log (PPO Expert)
+│   ├── dev_log_phase2_3.md      # Dev log index (Phase 2–3c) ← start here
+│   ├── dev_log_phase2.md        # Phase 2: expert data collection
+│   ├── dev_log_phase3a.md       # Phase 3a: supervised pre-training + bug audits
+│   ├── dev_log_phase3b.md       # Phase 3b: DPPO Runs 1–3 + lessons learned
+│   ├── dev_log_phase3c_v31.md   # Phase 3c v3.1: IMU late fusion, Runs 1–2
+│   ├── dev_log_phase3c_v32.md   # Phase 3c v3.2: physics IMU, current run
+│   ├── architecture.md          # Full architecture diagrams (all versions)
+│   ├── phase3c_action_plan.md   # Phase 3c decision log & next steps
+│   └── TOP_CONF_GUIDE.md        # Conference submission guide (CoRL/ICRA/RSS)
 │
 └── utils/
     ├── training_metrics.py
@@ -327,6 +333,7 @@ MIT License
 
 ---
 
-**Detailed research plan → [RESEARCH_PLAN.md](RESEARCH_PLAN.md)**
-**Training diagnostic log → [docs/dev_log.md](docs/dev_log.md)**
+**Dev log index (Phase 2–3c) → [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md)**
+**Phase 1 training log → [docs/dev_log.md](docs/dev_log.md)**
+**Architecture diagrams → [docs/architecture.md](docs/architecture.md)**
 **Conference submission guide → [docs/TOP_CONF_GUIDE.md](docs/TOP_CONF_GUIDE.md)**
