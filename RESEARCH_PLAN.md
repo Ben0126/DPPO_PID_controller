@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.5
-**Date:** 2026-04-11
-**Status:** Phase 3c v3.2 DPPO Run 1 in progress (`dppo_v32_20260411_114141`); v3.1 finite-diff IMU abandoned; physics-based IMU covariate shift ax 23×→1.4×; baseline DPPO ceiling at RMSE 0.168m (Run 2)
+**Version:** 3.6
+**Date:** 2026-04-13
+**Status:** Phase 3c v3.3 DPPO Run 1 in progress (`dppo_v33_20260413_033647`); v3.2 aborted u25 (un-normalised IMU); v3.3 adds normalisation fix + fresh 500-epoch pretrain (best loss −1.4435); baseline DPPO ceiling at RMSE 0.168m (Run 2)
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -31,16 +31,20 @@ Phase 1: 6-DOF Env + PPO Expert   ✓ DONE (Run 6: RMSE 0.069m, 0 crashes)
 Phase 2: FPV Data Collection       ✓ DONE (expert_demos_dr.h5: 1000 ep, 500k steps, DR A+B)
     ↓                              ✓ v3.1 re-collect DONE (expert_demos_v31.h5: 4.04GB, IMU+depth)
     ↓                              ✓ v3.2 re-collect DONE (expert_demos_v32.h5: 4.0GB, physics IMU)
+    ↓                              ✓ v3.3 re-collect DONE (expert_demos_v33.h5: 4.0GB, normalised physics IMU)
 Phase 3a: CNN Baseline             ✓ Re-run 2 complete (20260405_044808, best loss converged)
     ↓      v3.1 supervised         ✓ DONE (v31_20260406_185128, best loss -1.4415, 500 epochs)
     ↓      v3.2 supervised         ✓ DONE (v32_20260410_120042, best loss -1.437, 500 epochs)
+    ↓      v3.3 supervised         ✓ DONE (v33_20260412_052333, best loss -1.4435 @ epoch 488, 500 epochs)
 Phase 3b: D²PPO Dispersive Loss    ✓ Run 2 (u11, 0.168m) + Run 3 (u34, 0.488m) — both 50/50 crashes
     ↓       Root cause: value net lag; policy collapses before advantage estimates converge
     ↓      Run 4 (u155, 0.409m) — improved training (VLoss=17) but DR-aug pretrained hurt RMSE
 Phase 3c: DPPO v3.1 RL Fine-tuning   ✗ ABANDONED — 2 runs (RMSE 0.518/0.466m), finite-diff IMU
     ↓       Root cause: finite-diff accel = R^T a_world − ω×v_body; Coriolis term 20× noise in RL
-    ↓      DPPO v3.2 RL Fine-tuning  🔄 IN PROGRESS (dppo_v32_20260411_114141)
-    ↓       Physics IMU: covariate shift ax 23×→1.4×, ay 16×→1.2×
+    ↓      DPPO v3.2 RL Fine-tuning  ✗ ABORTED u25 (no ckpt) — specific_force not normalised (≈ −9.81 m/s²)
+    ↓       Supervised RMSE 1.985m confirmed normalisation gap before DPPO launch
+    ↓      DPPO v3.3 RL Fine-tuning  🔄 IN PROGRESS (dppo_v33_20260413_033647)
+    ↓       Normalised physics IMU: zero-centred specific_force; covariate shift ax 23×→1.4×
     ↓
 Phase 3d: OneDP Single-Step Distillation
     ↓
@@ -597,17 +601,25 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - Failure confirmed: ax std ratio expert/perturbed = 23×, ay = 16× (v3.2 drops to 1.4×/1.2×)
 - Files retained for historical reproduction: `scripts/train_diffusion_v31.py`, `scripts/train_dppo_v31.py`
 
-**v3.2 (Phase 3c — 🔄 DPPO Run 1 in progress 2026-04-11):**
+**v3.2 (Phase 3c — ✗ ABORTED 2026-04-11):**
 - IMU source: `QuadrotorDynamics.get_specific_force_body()` → `R^T @ (F_world − mg) / m`
   Gyro: `dynamics.ang_velocity`; exposed via `QuadrotorEnv.get_imu()` single call point
 - Same architecture as v3.1: VisionDPPOv31, 288D global_cond, IMUEncoder MLP(6→64→32)
-- Same DPPO hyperparameters as v3.1 Run 2: β=0.05, value_hidden_dim=512, warm-up 50, vloss_threshold 500
-- Distribution-shift improvement: ax 23×→1.4×, ay 16×→1.2× (validated before DPPO launch)
-- New files: `scripts/train_diffusion_v32.py`, `scripts/train_dppo_v32.py`, `scripts/evaluate_rhc_v32.py`
+- Distribution-shift improvement confirmed: ax 23×→1.4×, ay 16×→1.2×
 - Data: `data/expert_demos_v32.h5` (4.0 GB, collected 2026-04-10)
-- Supervised pretraining complete: best loss -1.437 (vs v3.1 -1.4415 — essentially identical)
-- Known issue: supervised RMSE 1.985m (IMU normalization gap — specific_force ≈ −9.81 m/s² not centered)
-  DPPO Run 1 monitoring whether value net can adapt; fix ready if needed
+- Supervised pretraining complete: best loss -1.437
+- **Fatal issue:** specific_force ≈ −9.81 m/s² at hover (gravity not subtracted in body frame at rest)
+  → IMU input never near zero → supervised RMSE 1.985m (vs 0.286m no-IMU baseline)
+  → DPPO Run 1 aborted at u25 (no checkpoint saved); value net had no meaningful signal
+
+**v3.3 (Phase 3c — 🔄 DPPO Run 1 in progress 2026-04-13):**
+- **Fix:** IMU normalised at collection time — `specific_force` zero-centred and unit-variance per axis
+- Same architecture: VisionDPPOv31, 288D global_cond, IMUEncoder MLP(6→64→32)
+- Same DPPO hyperparameters: β=0.05, value_hidden_dim=512, warm-up 50, vloss_threshold 500
+- New files: `scripts/train_diffusion_v33.py`, `scripts/train_dppo_v33.py`, `scripts/evaluate_rhc_v33.py`
+- Data: `data/expert_demos_v33.h5` (4.0 GB, collected 2026-04-11)
+- Supervised pretraining complete: best loss −1.4435 @ epoch 488 (`v33_20260412_052333`)
+- DPPO Run 1 started 2026-04-13: `dppo_v33_20260413_033647`
 
 **Long-term (Phase 5):**
 - Encoder: CNN → Pretrained ViT-Small + privileged state decoder head
@@ -642,6 +654,8 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - [x] v3.1 data collection → `data/expert_demos_v31.h5` (4.04GB, 2026-04-06)
 - [x] `collect_data.py --v32` flag — physics IMU via `env.unwrapped.get_imu()`, no finite-diff
 - [x] v3.2 data collection → `data/expert_demos_v32.h5` (4.0GB, 2026-04-10)
+- [x] `collect_data.py --v33` flag — physics IMU with per-axis normalisation (zero-centred, unit-variance)
+- [x] v3.3 data collection → `data/expert_demos_v33.h5` (4.0GB, 2026-04-11)
 
 ### Phase 3: Diffusion Policy
 
@@ -672,8 +686,11 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - [x] Architecture v3.2: `scripts/evaluate_rhc_v32.py` — RHC evaluator, physics IMU
 - [x] Phase 3a v3.2 supervised pre-training complete (best loss -1.437, 2026-04-10~11)
 - [x] Distribution-shift validation: ax 23×→1.4×, ay 16×→1.2× (confirmed fix justified)
+- [x] IMU normalisation fix (v3.3): per-axis zero-centred + unit-variance applied in `collect_data.py --v33`
+- [x] Phase 3a v3.3 supervised pre-training complete (best loss -1.4435 @ epoch 488, 2026-04-12~13)
 - [✗] Phase 3c DPPO v3.1 — 2 runs abandoned (finite-diff IMU covariate shift)
-- [🔄] Phase 3c DPPO v3.2 Run 1 in progress (`dppo_v32_20260411_114141`)
+- [✗] Phase 3c DPPO v3.2 Run 1 — aborted u25, no checkpoint (un-normalised IMU; supervised RMSE 1.985m)
+- [🔄] Phase 3c DPPO v3.3 Run 1 in progress (`dppo_v33_20260413_033647`, started 2026-04-13)
 - [ ] λ_depth ablation (0, 0.01, 0.1, 0.5) + IMU ablation (3 seeds each)
 - [ ] ONNX export script with FCN decoder stripping (`save_deployable()` already implemented)
 - [ ] OneDP single-step distillation

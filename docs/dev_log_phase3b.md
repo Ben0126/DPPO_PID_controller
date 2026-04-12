@@ -2383,3 +2383,38 @@ for i in range(0, len(vals), w):
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-04-12 04:19:15 bash -->
+### [Auto-Log] 2026-04-12 04:19:15 — DPPO Training — Started
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller
+
+# DPPO Run 5 - check second log
+ls -t logs/train_dppo_run5_*.log
+echo ""
+DLOG2=$(ls -t logs/train_dppo_run5_*.log 2>/dev/null | sed -n '2p')
+echo "Log2: $DLOG2"
+cat "$DLOG2" | tr -d '\r' | grep "Update" | tail -10`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-12 04:21:05 bash -->
+### [Auto-Log] 2026-04-12 04:21:05 — DPPO Training — Started
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller
+
+# Find all dppo logs
+ls -lt logs/ | grep -i dppo | head -10
+echo "---"
+# Check if run5 has its own log in a different location
+find . -name "*.log" -newer logs/train_dppo_run5_20260411_174353.log 2>/dev/null | grep -v __pycache__`
+
+**Output:**
+```
+(empty)
+```
