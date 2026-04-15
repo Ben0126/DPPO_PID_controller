@@ -51,7 +51,7 @@ dppo:
   learning_rate: 0.000005         # unchanged — 5e-6 conservative fine-tuning
   value_hidden_dim: 512           # Run2(v3.1): 256→512 — larger capacity for 288D input
   value_lr: 0.0003                # unchanged
-  value_warmup_updates: 50        # Run2(v3.1): freeze policy for first N updates while value net converges
+  value_warmup_updates: 100       # v3.3 Run2: 50→100 — VLoss was still ~3300 at u50; extend warmup so value net converges before policy updates
   vloss_best_threshold: 500.0     # Run2(v3.1): only save best ckpt when VLoss < this value
 
 # Logging

@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.6
-**Date:** 2026-04-13
-**Status:** Phase 3c v3.3 DPPO Run 1 in progress (`dppo_v33_20260413_033647`); v3.2 aborted u25 (un-normalised IMU); v3.3 adds normalisation fix + fresh 500-epoch pretrain (best loss −1.4435); baseline DPPO ceiling at RMSE 0.168m (Run 2)
+**Version:** 3.7
+**Date:** 2026-04-15
+**Status:** Phase 3c v3.3 complete (2 runs). Best: Run 1 RMSE 0.1039m, 50/50 crashes. Root cause confirmed: 74ms inference latency >> 20ms control period. Next: Phase 3d OneDP distillation.
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -43,10 +43,13 @@ Phase 3c: DPPO v3.1 RL Fine-tuning   ✗ ABANDONED — 2 runs (RMSE 0.518/0.466m
     ↓       Root cause: finite-diff accel = R^T a_world − ω×v_body; Coriolis term 20× noise in RL
     ↓      DPPO v3.2 RL Fine-tuning  ✗ ABORTED u25 (no ckpt) — specific_force not normalised (≈ −9.81 m/s²)
     ↓       Supervised RMSE 1.985m confirmed normalisation gap before DPPO launch
-    ↓      DPPO v3.3 RL Fine-tuning  🔄 IN PROGRESS (dppo_v33_20260413_033647)
-    ↓       Normalised physics IMU: zero-centred specific_force; covariate shift ax 23×→1.4×
+    ↓      DPPO v3.3 Run 1  ✓ DONE (dppo_v33_20260413_033647) — RMSE 0.1039m, 50/50 crashes
+    ↓       warmup=50; VLoss converged 17–80; best v3.3 result
+    ↓      DPPO v3.3 Run 2  ✓ DONE (dppo_v33_20260414_023817) — RMSE 0.1335m, 50/50 crashes
+    ↓       warmup=100; peak reward 0.7077 @ u225; collapsed u275+; RMSE worse despite higher reward
+    ↓       Root cause confirmed: 74ms DDIM inference >> 20ms control period (50Hz) — latency bottleneck
     ↓
-Phase 3d: OneDP Single-Step Distillation
+Phase 3d: OneDP Single-Step Distillation  ← CURRENT
     ↓
 Phase 4: Full Benchmark Evaluation (BC-LSTM, VTD3, Standard DP)
     ↓
@@ -612,14 +615,18 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
   → IMU input never near zero → supervised RMSE 1.985m (vs 0.286m no-IMU baseline)
   → DPPO Run 1 aborted at u25 (no checkpoint saved); value net had no meaningful signal
 
-**v3.3 (Phase 3c — 🔄 DPPO Run 1 in progress 2026-04-13):**
+**v3.3 (Phase 3c — ✓ 2 runs complete 2026-04-13~15):**
 - **Fix:** IMU normalised at collection time — `specific_force` zero-centred and unit-variance per axis
 - Same architecture: VisionDPPOv31, 288D global_cond, IMUEncoder MLP(6→64→32)
-- Same DPPO hyperparameters: β=0.05, value_hidden_dim=512, warm-up 50, vloss_threshold 500
 - New files: `scripts/train_diffusion_v33.py`, `scripts/train_dppo_v33.py`, `scripts/evaluate_rhc_v33.py`
 - Data: `data/expert_demos_v33.h5` (4.0 GB, collected 2026-04-11)
-- Supervised pretraining complete: best loss −1.4435 @ epoch 488 (`v33_20260412_052333`)
-- DPPO Run 1 started 2026-04-13: `dppo_v33_20260413_033647`
+- Supervised pretraining: best loss −1.4435 @ epoch 488 (`v33_20260412_052333`)
+- **Run 1** (`dppo_v33_20260413_033647`): β=0.05, warmup=50 → **RMSE 0.1039m**, 50/50 crashes, mean reward 24.51
+  - Best ckpt @ ~u200; VLoss converged 17–80; best result across all architectures
+- **Run 2** (`dppo_v33_20260414_023817`): β=0.05, warmup=100 → RMSE 0.1335m, 50/50 crashes, mean reward 30.23
+  - Peak reward 0.7077 @ u225 (highest ever); collapsed u275+; RMSE worse than Run 1
+  - Policy traded position accuracy for episode longevity — reward/RMSE misalignment exposed
+- **Root cause confirmed:** DDIM 10-step = 74ms >> 20ms control period; covariate shift unresolvable at 13Hz
 
 **Long-term (Phase 5):**
 - Encoder: CNN → Pretrained ViT-Small + privileged state decoder head
@@ -690,7 +697,9 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - [x] Phase 3a v3.3 supervised pre-training complete (best loss -1.4435 @ epoch 488, 2026-04-12~13)
 - [✗] Phase 3c DPPO v3.1 — 2 runs abandoned (finite-diff IMU covariate shift)
 - [✗] Phase 3c DPPO v3.2 Run 1 — aborted u25, no checkpoint (un-normalised IMU; supervised RMSE 1.985m)
-- [🔄] Phase 3c DPPO v3.3 Run 1 in progress (`dppo_v33_20260413_033647`, started 2026-04-13)
+- [x] Phase 3c DPPO v3.3 Run 1 (`dppo_v33_20260413_033647`, 2026-04-13~14) — RMSE 0.1039m, 50/50 crashes
+- [x] Phase 3c DPPO v3.3 Run 2 (`dppo_v33_20260414_023817`, 2026-04-14~15) — RMSE 0.1335m, 50/50 crashes
+- [ ] Phase 3d OneDP single-step distillation (breaks 74ms latency bottleneck)
 - [ ] λ_depth ablation (0, 0.01, 0.1, 0.5) + IMU ablation (3 seeds each)
 - [ ] ONNX export script with FCN decoder stripping (`save_deployable()` already implemented)
 - [ ] OneDP single-step distillation

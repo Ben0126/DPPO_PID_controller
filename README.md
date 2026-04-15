@@ -139,24 +139,26 @@ Phase 3: Vision Diffusion Policy
               DR-aug pretrained; value loss converged (VLoss=17), reward stable, but RMSE worse
    3c    [✗]  DPPO v3.1 Run 1+2 ABANDONED — RMSE 0.518/0.466m, finite-diff IMU covariate shift
    3c-v32[✗]  DPPO v3.2 Run 1 ABORTED u25 (no checkpoint) — IMU not normalised; supervised RMSE 1.985m
-   3c-v33[🔄] DPPO v3.3 Run 1 IN PROGRESS (dppo_v33_20260413_033647)
-              Normalized physics IMU; pretrained on v33_20260412_052333 (best loss -1.4435)
-   3d    [ ]  OneDP single-step distillation (solve deployment latency)
+   3c-v33[✓]  DPPO v3.3 Run 1 DONE (dppo_v33_20260413_033647) — RMSE 0.1039m, 50/50 crashes
+              warmup=50; VLoss converged 17–80; best result so far (vs 0.168m baseline)
+   3c-v33[✓]  DPPO v3.3 Run 2 DONE (dppo_v33_20260414_023817) — RMSE 0.1335m, 50/50 crashes
+              warmup=100; best reward 0.7077 @ u225; collapsed u275+; RMSE worse than Run 1
+              Root cause confirmed: 74ms inference >> 20ms control period → covariate shift hard ceiling
+   3d    [ ]  OneDP single-step distillation (target <16ms → 62Hz+, breaks latency bottleneck)
 
 Phase 4: Evaluation
          [ ]  Full benchmark (BC-LSTM, VTD3, Standard DP)
-         [ ]  Closed-loop RHC evaluation
+         [✓]  v3.3 RHC evaluation — Run 1: 0.1039m / Run 2: 0.1335m (both 50/50 crashes)
 
 Phase 5: Hardware Deployment
          [ ]  Jetson Orin Nano + TensorRT (FCN decoder pruned before export)
          [ ]  Real flight testing (with wind disturbance)
 ```
 
-**Current status:** Phase 3c v3.3 DPPO Run 1 in progress (`dppo_v33_20260413_033647`, started 2026-04-13).
-v3.1 IMU (finite-difference) abandoned 2026-04-10 after 2 failed runs (RMSE 0.466–0.518m). Root cause: finite-diff `v_body` amplifies Coriolis noise ≥20× during RL rollouts.
-v3.2 replaced with physics-based `get_specific_force_body()` (ax 23×→1.4×), but supervised RMSE regressed to 1.985m due to un-normalised specific force (≈ −9.81 m/s²); DPPO Run 1 aborted at u25.
-v3.3 adds IMU normalisation fix (zero-centred, unit-variance specific force); new dataset `expert_demos_v33.h5` (4.0GB) + fresh 500-epoch supervised pretrain (best loss −1.4435).
-Run 4 baseline (no-IMU) reached RMSE 0.409m — best training quality so far (VLoss=17), confirming training recipe is sound; IMU fusion + normalisation expected to close remaining gap.
+**Current status:** Phase 3c v3.3 complete (2 runs). Next: Phase 3d OneDP single-step distillation.
+v3.3 Run 1 (`dppo_v33_20260413_033647`, 2026-04-13~14): RMSE **0.1039m**, 50/50 crashes. Best result to date; warmup=50.
+v3.3 Run 2 (`dppo_v33_20260414_023817`, 2026-04-14~15): RMSE 0.1335m, 50/50 crashes. warmup=100 → peak reward 0.7077 @ u225 but RMSE worse (policy learned longevity over accuracy).
+Root cause confirmed: DDIM 10-step inference = 74ms >> 20ms control period (50Hz). Covariate shift cannot be resolved without closing the latency gap. Phase 3d (OneDP distillation → <16ms) is the required next step.
 See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for detailed training analysis.
 
 ---
@@ -314,13 +316,13 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 ## Evaluation Metrics / 評估指標
 
-| Metric | Current Best | Latest Run | Target | Conference |
-|--------|-------------|------------|--------|-----------|
-| Position RMSE | 0.069m (PPO) / **0.168m** (DPPO Run 2) | 0.409m (Run 4, DR-aug pretrained) | **<0.168m (Phase 3c goal)** | ICRA |
-| Crash Rate | 0% (PPO) / 100% (all diffusion runs to date) | 50/50 (Run 4) | **<50% (Phase 3c) → <10% (Phase 4)** | CoRL |
-| Inference Latency | ~94ms (10-step DDIM) | — | **<20ms (after OneDP)** | CoRL/ICRA |
-| Control Frequency | 12.5Hz | — | **>60Hz (after OneDP)** | ICRA |
-| IMU covariate shift (ax std ratio) | 23× (v3.1 finite-diff) | **1.4×** (v3.3 physics+norm) | <2× | — |
+| Metric | Current Best | Phase 3c v3.3 Result | Target | Conference |
+|--------|-------------|----------------------|--------|-----------|
+| Position RMSE | 0.069m (PPO) / **0.1039m** (v3.3 Run 1) | Run 1: 0.1039m / Run 2: 0.1335m | **<0.10m (Phase 3d goal)** | ICRA |
+| Crash Rate | 0% (PPO) / 100% (all diffusion runs) | 50/50 (both runs) | **<50% (after OneDP latency fix)** | CoRL |
+| Inference Latency | 74ms (10-step DDIM, v3.3) | 74ms | **<16ms (after OneDP)** | CoRL/ICRA |
+| Control Frequency | ~13Hz (current) | ~13Hz | **>62Hz (after OneDP)** | ICRA |
+| IMU covariate shift (ax std ratio) | **1.4×** (v3.3 physics+norm) | 1.4× | <2× ✓ | — |
 
 ---
 

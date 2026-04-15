@@ -1034,3 +1034,26 @@ Order is strict: poor teacher → poor student.
 ---
 
 ## 7. Appendix: Hyperparameter Reference
+
+---
+<!-- auto-log 2026-04-13 04:08:39 bash -->
+### [Auto-Log] 2026-04-13 04:08:39 — Device Check
+
+**Command:** `python "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/check_device.py" 2>&1 | head -5; echo "---"; python -c "
+import json
+with open('c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/training_metrics/training_metrics.json') as f:
+    data = json.load(f)
+updates = data.get('updates', [])
+print(f'Total updates: {len(updates)}')
+if updates:
+    print('Last 5:')
+    for u in updates[-5:]:
+        print(u)
+    best = max(updates, key=lambda x: x.get('mean_reward', float('-inf')))
+    print(f'Best: {best}')
+"`
+
+**Output:**
+```
+(empty)
+```

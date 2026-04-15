@@ -2418,3 +2418,14 @@ find . -name "*.log" -newer logs/train_dppo_run5_20260411_174353.log 2>/dev/null
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-04-14 02:33:03 bash -->
+### [Auto-Log] 2026-04-14 02:33:03 — RHC Evaluation
+
+**Command:** `cd "C:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && ls scripts/evaluate_rhc* 2>&1`
+
+**Output:**
+```
+(empty)
+```
