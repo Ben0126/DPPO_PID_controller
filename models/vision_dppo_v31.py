@@ -422,6 +422,56 @@ class VisionDPPOv31(nn.Module):
         }
 
     # ------------------------------------------------------------------
+    # Training: OneDP distillation (Phase 3d)
+    # ------------------------------------------------------------------
+
+    def compute_distillation_loss(
+        self,
+        image_stack: torch.Tensor,
+        imu_data: torch.Tensor,
+        teacher_x0: torch.Tensor,
+        depth_gt: Optional[torch.Tensor] = None,
+        lambda_dispersive: float = 0.05,
+        lambda_depth: float = 0.1,
+    ) -> Tuple[torch.Tensor, dict]:
+        """
+        ε-space distillation loss (avoids 64.2× x0 amplification at t=99):
+            1. Use teacher_x0 as clean action target
+            2. Add noise at random t: x_t = sqrt(α̅_t)*teacher_x0 + sqrt(1-α̅_t)*ε
+            3. Student predicts ε from x_t
+            4. L = MSE(ε_pred_student, ε)
+               + lambda_disp * L_dispersive
+               + lambda_depth * L_depth
+
+        Equivalent to supervised diffusion training but targeting DPPO-refined
+        teacher actions instead of ground-truth expert actions.
+        Called on STUDENT (trainable). teacher_x0 pre-computed with no_grad.
+        """
+        device = image_stack.device
+        B = image_stack.shape[0]
+        global_cond, vision_feat = self._encode(image_stack, imu_data)
+
+        # teacher_x0 shape: (B, action_dim, T_pred) — already in (B, D, T) layout
+        t = torch.randint(0, self.diffusion.num_timesteps, (B,), device=device)
+        noisy_actions, noise = self.diffusion.q_sample(teacher_x0, t)
+        eps_pred = self.noise_pred_net(noisy_actions, t, global_cond)
+
+        l_dist = F.mse_loss(eps_pred, noise)
+        l_disp = self._dispersive_loss(vision_feat) * lambda_dispersive
+
+        l_depth = torch.tensor(0.0, device=device)
+        if depth_gt is not None and self.depth_decoder is not None:
+            depth_pred = self.depth_decoder(vision_feat)
+            l_depth = F.mse_loss(depth_pred, depth_gt.float() / 255.0) * lambda_depth
+
+        total = l_dist + l_disp + l_depth
+        return total, {
+            'loss_distill': l_dist.item(),
+            'loss_dispersive': l_disp.item(),
+            'loss_depth': l_depth.item(),
+        }
+
+    # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
 
@@ -453,10 +503,18 @@ class VisionDPPOv31(nn.Module):
         def denoise_fn(noisy_action, timestep, condition):
             return self.noise_pred_net(noisy_action, timestep, condition)
 
-        shape      = (B, self.action_dim, self.T_pred)
-        action_seq = self.diffusion.ddim_sample(
-            denoise_fn, global_cond, shape, ddim_steps=steps
-        )
+        shape = (B, self.action_dim, self.T_pred)
+
+        if steps == 1:
+            action_seq = self.diffusion.sample_onestep(
+                denoise_fn=lambda x, t, c: self.noise_pred_net(x, t, c),
+                condition=global_cond,
+                shape=shape,
+            )
+        else:
+            action_seq = self.diffusion.ddim_sample(
+                denoise_fn, global_cond, shape, ddim_steps=steps
+            )
         action_seq = action_seq.permute(0, 2, 1)
         return torch.clamp(action_seq, -1.0, 1.0)
 

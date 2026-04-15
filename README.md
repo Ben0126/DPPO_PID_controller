@@ -144,7 +144,11 @@ Phase 3: Vision Diffusion Policy
    3c-v33[✓]  DPPO v3.3 Run 2 DONE (dppo_v33_20260414_023817) — RMSE 0.1335m, 50/50 crashes
               warmup=100; best reward 0.7077 @ u225; collapsed u275+; RMSE worse than Run 1
               Root cause confirmed: 74ms inference >> 20ms control period → covariate shift hard ceiling
-   3d    [ ]  OneDP single-step distillation (target <16ms → 62Hz+, breaks latency bottleneck)
+   3d    [✓]  OneDP single-step distillation DONE (onedp_v33_20260415_134933)
+              ε-space distillation: loss_distill 0.0069→0.0003 (50 epochs), inference 9.9ms ✓
+              RHC eval: RMSE 0.2713m, 50/50 crashes — latency fixed but quality insufficient
+              Root cause: ε-space distillation (all t uniform) ≠ optimise for t=99 1-step accuracy
+              Next: Phase 3d-v2 (direct DPPO fine-tune of 1-step student, or alternative approach)
 
 Phase 4: Evaluation
          [ ]  Full benchmark (BC-LSTM, VTD3, Standard DP)
@@ -155,10 +159,9 @@ Phase 5: Hardware Deployment
          [ ]  Real flight testing (with wind disturbance)
 ```
 
-**Current status:** Phase 3c v3.3 complete (2 runs). Next: Phase 3d OneDP single-step distillation.
-v3.3 Run 1 (`dppo_v33_20260413_033647`, 2026-04-13~14): RMSE **0.1039m**, 50/50 crashes. Best result to date; warmup=50.
-v3.3 Run 2 (`dppo_v33_20260414_023817`, 2026-04-14~15): RMSE 0.1335m, 50/50 crashes. warmup=100 → peak reward 0.7077 @ u225 but RMSE worse (policy learned longevity over accuracy).
-Root cause confirmed: DDIM 10-step inference = 74ms >> 20ms control period (50Hz). Covariate shift cannot be resolved without closing the latency gap. Phase 3d (OneDP distillation → <16ms) is the required next step.
+**Current status:** Phase 3d OneDP distillation complete (2026-04-15~16). Inference latency resolved (9.9ms ✓), but distillation quality insufficient — RMSE 0.271m vs teacher 0.104m.
+Root cause of distillation failure: ε-space distillation trains student uniformly across all timesteps t∈[0,99], but 1-step inference only uses t=99. Mismatch between training objective and inference path.
+Next: Phase 3d-v2 — rethinking distillation strategy (options: DPPO fine-tune 1-step student; self-consistency distillation at t=99 only; or accept 13Hz and focus on crash reduction).
 See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for detailed training analysis.
 
 ---
@@ -318,10 +321,10 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 | Metric | Current Best | Phase 3c v3.3 Result | Target | Conference |
 |--------|-------------|----------------------|--------|-----------|
-| Position RMSE | 0.069m (PPO) / **0.1039m** (v3.3 Run 1) | Run 1: 0.1039m / Run 2: 0.1335m | **<0.10m (Phase 3d goal)** | ICRA |
-| Crash Rate | 0% (PPO) / 100% (all diffusion runs) | 50/50 (both runs) | **<50% (after OneDP latency fix)** | CoRL |
-| Inference Latency | 74ms (10-step DDIM, v3.3) | 74ms | **<16ms (after OneDP)** | CoRL/ICRA |
-| Control Frequency | ~13Hz (current) | ~13Hz | **>62Hz (after OneDP)** | ICRA |
+| Position RMSE | 0.069m (PPO) / **0.1039m** (v3.3 Run 1) | Run 1: 0.1039m / Run 2: 0.1335m / **OneDP: 0.2713m** | **<0.10m** | ICRA |
+| Crash Rate | 0% (PPO) / 100% (all diffusion runs) | 50/50 (all runs incl. OneDP) | **<50%** | CoRL |
+| Inference Latency | 74ms (10-step DDIM) | **9.9ms (OneDP 1-step ✓)** | **<16ms ✓ ACHIEVED** | CoRL/ICRA |
+| Control Frequency | ~13Hz (current) | **~100Hz (OneDP ✓)** | **>62Hz ✓ ACHIEVED** | ICRA |
 | IMU covariate shift (ax std ratio) | **1.4×** (v3.3 physics+norm) | 1.4× | <2× ✓ | — |
 
 ---

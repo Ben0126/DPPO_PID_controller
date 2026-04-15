@@ -35,7 +35,7 @@ from models.ppo_expert import PPOExpert, RunningMeanStd
 def evaluate_v33(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
                  policy: VisionDPPOv31,
                  n_episodes: int, T_obs: int, T_action: int,
-                 device: torch.device) -> Dict:
+                 device: torch.device, ddim_steps: int = 10) -> Dict:
     """Evaluate VisionDPPOv31 (trained on v3.3 data) with RHC."""
     results = {
         'rewards': [], 'lengths': [], 'crashes': 0,
@@ -62,7 +62,7 @@ def evaluate_v33(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
 
             t_start = time.perf_counter()
             with torch.no_grad():
-                action_seq = policy.predict_action(img_tensor, imu_tensor)
+                action_seq = policy.predict_action(img_tensor, imu_tensor, ddim_steps=ddim_steps)
             results['inference_times'].append((time.perf_counter() - t_start) * 1000)
 
             action_seq = action_seq.squeeze(0).cpu().numpy()
@@ -199,6 +199,7 @@ def evaluate(args):
         T_obs=vision_cfg['T_obs'],
         T_action=action_cfg['T_action'],
         device=device,
+        ddim_steps=args.ddim_steps,
     )
 
     n = args.n_episodes
@@ -247,6 +248,8 @@ if __name__ == "__main__":
     parser.add_argument('--ppo-norm',         type=str, default=None)
     parser.add_argument('--ppo-hidden-dim',   type=int, default=256)
     parser.add_argument('--n-episodes',       type=int, default=50)
+    parser.add_argument('--ddim-steps',       type=int, default=10,
+                        help='DDIM inference steps (1=OneDP single-step, default=10)')
     parser.add_argument('--output-dir',       type=str,
                         default='evaluation_results/rhc_v33/')
     args = parser.parse_args()

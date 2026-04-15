@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.7
-**Date:** 2026-04-15
-**Status:** Phase 3c v3.3 complete (2 runs). Best: Run 1 RMSE 0.1039m, 50/50 crashes. Root cause confirmed: 74ms inference latency >> 20ms control period. Next: Phase 3d OneDP distillation.
+**Version:** 3.8
+**Date:** 2026-04-16
+**Status:** Phase 3d OneDP distillation complete. Inference 9.9ms ✓ (<16ms target met). Quality insufficient: RMSE 0.271m vs teacher 0.104m, 50/50 crashes. Root cause: ε-space distillation mismatch. Next: Phase 3d-v2 strategy decision.
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -49,7 +49,11 @@ Phase 3c: DPPO v3.1 RL Fine-tuning   ✗ ABANDONED — 2 runs (RMSE 0.518/0.466m
     ↓       warmup=100; peak reward 0.7077 @ u225; collapsed u275+; RMSE worse despite higher reward
     ↓       Root cause confirmed: 74ms DDIM inference >> 20ms control period (50Hz) — latency bottleneck
     ↓
-Phase 3d: OneDP Single-Step Distillation  ← CURRENT
+Phase 3d: OneDP Single-Step Distillation  ✓ DONE (2026-04-15~16, onedp_v33_20260415_134933)
+    ↓       ε-space distillation: loss_distill 0.0069→0.0003, inference 9.9ms ✓
+    ↓       RHC eval: RMSE 0.2713m, 50/50 crashes (quality insufficient)
+    ↓       Root cause: ε-space trains for all t uniformly; 1-step at t=99 not specifically optimised
+    ↓      Phase 3d-v2: distillation strategy revision  ← CURRENT
     ↓
 Phase 4: Full Benchmark Evaluation (BC-LSTM, VTD3, Standard DP)
     ↓
@@ -628,6 +632,16 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
   - Policy traded position accuracy for episode longevity — reward/RMSE misalignment exposed
 - **Root cause confirmed:** DDIM 10-step = 74ms >> 20ms control period; covariate shift unresolvable at 13Hz
 
+**Phase 3d OneDP (2026-04-15~16):**
+- Teacher: `dppo_v33_20260413_033647/best_dppo_v33_model.pt` (Run 1, RMSE 0.1039m)
+- **Attempt 1 (x0-space):** MSE(x0_student, x0_teacher) → 64.2× amplification at t=99 pushes x0_student to clamp boundary; gradient=0; `loss_distill=24.75` constant, no learning. Aborted epoch 22.
+- **Attempt 2 (ε-space):** Train student to predict ε at random t from teacher's x0 targets (standard diffusion loss on teacher actions). `loss_distill: 0.0069→0.0003` in 50 epochs. Converged well.
+- New file: `scripts/train_onedp_v33.py`, `models/diffusion_process.py::sample_onestep()`, `models/vision_dppo_v31.py::compute_distillation_loss()`
+- Checkpoint: `onedp_v33_20260415_134933/best_onedp_model.pt`
+- **RHC eval (--ddim-steps 1):** inference **9.9ms** ✓ (<16ms), RMSE **0.2713m**, 50/50 crashes
+- **Root cause of quality gap:** ε-space trains for all t∈[0,99] uniformly; student's t=99 ε-prediction not specifically optimised; 1-step inference accumulates larger per-step error than 10-step DDIM despite low average distillation loss
+- **Inference target achieved** (9.9ms < 16ms); **quality target not achieved** (RMSE 0.271m > 0.104m)
+
 **Long-term (Phase 5):**
 - Encoder: CNN → Pretrained ViT-Small + privileged state decoder head
 - Simulator: Custom Gymnasium → Flightmare + domain randomization
@@ -699,10 +713,17 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - [✗] Phase 3c DPPO v3.2 Run 1 — aborted u25, no checkpoint (un-normalised IMU; supervised RMSE 1.985m)
 - [x] Phase 3c DPPO v3.3 Run 1 (`dppo_v33_20260413_033647`, 2026-04-13~14) — RMSE 0.1039m, 50/50 crashes
 - [x] Phase 3c DPPO v3.3 Run 2 (`dppo_v33_20260414_023817`, 2026-04-14~15) — RMSE 0.1335m, 50/50 crashes
-- [ ] Phase 3d OneDP single-step distillation (breaks 74ms latency bottleneck)
+- [x] `models/diffusion_process.py::sample_onestep()` — 1-step x0 prediction at t=99 (no @no_grad)
+- [x] `models/vision_dppo_v31.py::compute_distillation_loss()` — ε-space distillation loss
+- [x] `models/vision_dppo_v31.py::predict_action()` — ddim_steps==1 branch added
+- [x] `scripts/train_onedp_v33.py` — distillation training script (teacher frozen 10-step → student 1-step)
+- [x] `scripts/evaluate_rhc_v33.py` — --ddim-steps CLI arg added
+- [x] Phase 3d x0-space attempt (FAILED: 64.2× amplification, gradient=0 at clamp boundary)
+- [x] Phase 3d ε-space distillation (`onedp_v33_20260415_134933`, 2026-04-15~16) — loss 0.0069→0.0003
+- [x] Phase 3d RHC eval: inference 9.9ms ✓, RMSE 0.2713m, 50/50 crashes (quality insufficient)
+- [ ] Phase 3d-v2: revised distillation strategy (options TBD)
 - [ ] λ_depth ablation (0, 0.01, 0.1, 0.5) + IMU ablation (3 seeds each)
 - [ ] ONNX export script with FCN decoder stripping (`save_deployable()` already implemented)
-- [ ] OneDP single-step distillation
 
 ### Phase 4: Evaluation
 

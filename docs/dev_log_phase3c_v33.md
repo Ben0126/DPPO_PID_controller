@@ -627,3 +627,177 @@ print('Need: --ddim-steps CLI arg, passed through evaluate_v33 to predict_action
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-04-15 09:00:45 edit -->
+### [Auto-Log] 2026-04-15 09:00:45 — Script Fix
+
+**File:** `scripts\evaluate_rhc_v33.py`
+
+**Before:**
+```python
+def evaluate_v33(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
+                 policy: VisionDPPOv31,
+                 n_episodes: int, T_obs: int, T_action: int,
+                 device: torch.device) -> Dict:
+```
+
+**After:**
+```python
+def evaluate_v33(env: QuadrotorVisualEnv, base_env: QuadrotorEnv,
+                 policy: VisionDPPOv31,
+                 n_episodes: int, T_obs: int, T_action: int,
+                 device: torch.device, ddim_steps: int = 10) -> Dict:
+```
+
+---
+<!-- auto-log 2026-04-15 09:00:51 edit -->
+### [Auto-Log] 2026-04-15 09:00:51 — Script Fix
+
+**File:** `scripts\evaluate_rhc_v33.py`
+
+**Before:**
+```python
+t_start = time.perf_counter()
+            with torch.no_grad():
+                action_seq = policy.predict_action(img_tensor, imu_tensor)
+            results['inference_times'].append((time.perf_counter() - t_start) * 1000)
+```
+
+**After:**
+```python
+t_start = time.perf_counter()
+            with torch.no_grad():
+                action_seq = policy.predict_action(img_tensor, imu_tensor, ddim_steps=ddim_steps)
+            results['inference_times'].append((time.perf_counter() - t_start) * 1000)
+```
+
+---
+<!-- auto-log 2026-04-15 09:00:56 edit -->
+### [Auto-Log] 2026-04-15 09:00:56 — Script Fix
+
+**File:** `scripts\evaluate_rhc_v33.py`
+
+**Before:**
+```python
+diff_results = evaluate_v33(
+        visual_env, base_env, policy, args.n_episodes,
+        T_obs=vision_cfg['T_obs'],
+        T_action=action_cfg['T_action'],
+        device=device,
+    )
+```
+
+**After:**
+```python
+diff_results = evaluate_v33(
+        visual_env, base_env, policy, args.n_episodes,
+        T_obs=vision_cfg['T_obs'],
+        T_action=action_cfg['T_action'],
+        device=device,
+        ddim_steps=args.ddim_steps,
+    )
+```
+
+---
+<!-- auto-log 2026-04-15 09:01:02 edit -->
+### [Auto-Log] 2026-04-15 09:01:02 — Script Fix
+
+**File:** `scripts\evaluate_rhc_v33.py`
+
+**Before:**
+```python
+parser.add_argument('--n-episodes',       type=int, default=50)
+    parser.add_argument('--output-dir',       type=str,
+                        default='evaluation_results/rhc_v33/')
+```
+
+**After:**
+```python
+parser.add_argument('--n-episodes',       type=int, default=50)
+    parser.add_argument('--ddim-steps',       type=int, default=10,
+                        help='DDIM inference steps (1=OneDP single-step, default=10)')
+    parser.add_argument('--output-dir',       type=str,
+                        default='evaluation_results/rhc_v33/')
+```
+
+---
+<!-- auto-log 2026-04-15 09:02:05 write -->
+### [Auto-Log] 2026-04-15 09:02:05 — New File: Script Fix
+
+**File:** `scripts\train_onedp_v33.py`
+
+**Content:**
+```python
+"""
+Phase 3d: OneDP Single-Step Distillation (v3.3)
+
+Teacher  : VisionDPPOv31 (DPPO fine-tuned, frozen, 10-step DDIM)
+Student  : VisionDPPOv31 (1-step inference, trainable)
+
+Distillation loss:
+    L = MSE(x0_student, x0_teacher)
+      + lambda_dispersive * L_dispersive
+      + lambda_depth * L_depth
+
+Root cause of Phase 3c bottleneck: DDIM 10-step = 74ms >> 20ms control
+period (50Hz). 1-step distillation targets ~13ms inference.
+
+Usage:
+    python -m scripts.train_onedp_v33 \\
+        --teacher checkpoints/diffusion_policy/dppo_v33_20260413_033647/best_dppo_v33_model.pt \\
+        --config  configs/diffusion_policy.yaml \\
+        2>&1 | tee logs/train_onedp_v33_$(date +%Y%m%d_%H%M%S).log
+"""
+
+import os
+import sys
+import argparse
+import yaml
+import logging
+import numpy as np
+import torch
+f
+... [truncated — 13994 chars total]
+```
+
+---
+<!-- auto-log 2026-04-16 02:35:12 bash -->
+### [Auto-Log] 2026-04-16 02:35:12 — RHC v3.3 Evaluation
+
+**Command:** `powershell -Command "
+\$proc = Start-Process \`
+    -FilePath 'C:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller\dppo\Scripts\python.exe' \`
+    -ArgumentList '-m', 'scripts.evaluate_rhc_v33', '--diffusion-model', 'checkpoints/diffusion_policy/onedp_v33_20260415_134933/best_onedp_model.pt', '--ppo-model', 'checkpoints/ppo_expert/20260401_103107/best_model.pt', '--ppo-norm', 'checkpoints/ppo_expert/20260401_103107/best_obs_rms.npz', '--ddim-steps', '1' \`
+    -WorkingDirectory 'C:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller' \`
+    -RedirectStandardOutput 'logs\eval_rhc_onedp_v33.log' \`
+    -RedirectStandardError 'logs\eval_rhc_onedp_v33_err.log' \`
+    -NoNewWindow -PassThru
+Write-Host \"PID: \$(\$proc.Id)\"
+"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-16 02:48:20 bash -->
+### [Auto-Log] 2026-04-16 02:48:20 — RHC v3.3 Evaluation
+
+**Command:** `powershell -Command "
+\$logdir = 'C:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller\logs'
+\$proc = Start-Process \`
+    -FilePath 'C:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller\dppo\Scripts\python.exe' \`
+    -ArgumentList '-m', 'scripts.evaluate_rhc_v33', '--diffusion-model', 'checkpoints/diffusion_policy/onedp_v33_20260415_134933/best_onedp_model.pt', '--ppo-model', 'checkpoints/ppo_expert/20260401_103107/best_model.pt', '--ppo-norm', 'checkpoints/ppo_expert/20260401_103107/best_obs_rms.npz', '--ddim-steps', '1' \`
+    -WorkingDirectory 'C:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller' \`
+    -RedirectStandardOutput \"\$logdir\eval_rhc_onedp_v33_run2.log\" \`
+    -RedirectStandardError \"\$logdir\eval_rhc_onedp_v33_run2_err.log\" \`
+    -NoNewWindow -PassThru
+Write-Host \"PID: \$(\$proc.Id)\"
+"`
+
+**Output:**
+```
+(empty)
+```

@@ -393,3 +393,78 @@ v3.1 的 IMU Late Fusion + FCN Depth 假設前提正確（高頻姿態回饋有�
 
 ---
 
+
+---
+<!-- auto-log 2026-04-15 09:00:10 edit -->
+### [Auto-Log] 2026-04-15 09:00:10 — Model Fix
+
+**File:** `models\vision_dppo_v31.py`
+
+**Before:**
+```python
+shape      = (B, self.action_dim, self.T_pred)
+        action_seq = self.diffusion.ddim_sample(
+            denoise_fn, global_cond, shape, ddim_steps=steps
+        )
+        action_seq = action_seq.permute(0, 2, 1)
+```
+
+**After:**
+```python
+shape = (B, self.action_dim, self.T_pred)
+
+        if steps == 1:
+            action_seq = self.diffusion.sample_onestep(
+                denoise_fn=lambda x, t, c: self.noise_pred_net(x, t, c),
+                condition=global_cond,
+                shape=shape,
+            )
+        else:
+            action_seq = self.diffusion.ddim_sample(
+                denoise_fn, global_cond, shape, ddim_steps=steps
+            )
+        action_seq = action_seq.permute(0, 2, 1)
+```
+
+---
+<!-- auto-log 2026-04-15 09:00:27 edit -->
+### [Auto-Log] 2026-04-15 09:00:27 — Model Fix
+
+**File:** `models\vision_dppo_v31.py`
+
+**Before:**
+```python
+# ------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def predict_action(self, image_stack: torch.Tensor,
+```
+
+**After:**
+```python
+# ------------------------------------------------------------------
+    # Training: OneDP distillation (Phase 3d)
+    # ------------------------------------------------------------------
+
+    def compute_distillation_loss(
+        self,
+        image_stack: torch.Tensor,
+        imu_data: torch.Tensor,
+        teacher_x0: torch.Tensor,
+        depth_gt: Optional[torch.Tensor] = None,
+        lambda_dispersive: float = 0.05,
+        lambda_depth: float = 0.1,
+    ) -> Tuple[torch.Tensor, dict]:
+        """
+        1-step distillation loss (no advantage weighting):
+            L = MSE(x0_student, teacher_x0)
+              + lambda_disp * L_dispersive(vision_feat)
+              + lambda_depth * L_depth
+
+        Called on STUDENT (trainable). teacher_x0 pre-computed with no_grad.
+        """
+
+... [truncated — 1982 chars total]
+```

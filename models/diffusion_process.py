@@ -261,3 +261,26 @@ class DiffusionProcess:
                 action_t = action_t + sigma * torch.randn_like(action_t)
 
         return action_t
+
+    def sample_onestep(
+        self,
+        denoise_fn,
+        condition: torch.Tensor,
+        shape: tuple,
+    ) -> torch.Tensor:
+        """
+        OneDP 1-step inference: x_T -> x_0 via single UNet call at t=T-1=99.
+        NO @torch.no_grad() decorator — caller controls gradient context.
+        """
+        device = condition.device
+        B = shape[0]
+        t_idx = self.num_timesteps - 1          # 99
+
+        x_t = torch.randn(shape, device=device)
+        t_batch = torch.full((B,), t_idx, device=device, dtype=torch.long)
+
+        eps_pred = denoise_fn(x_t, t_batch, condition)
+
+        alpha_bar = self.alphas_cumprod[t_idx].to(device)
+        x0_pred = (x_t - torch.sqrt(1.0 - alpha_bar) * eps_pred) / torch.sqrt(alpha_bar)
+        return torch.clamp(x0_pred, -5.0, 5.0)
