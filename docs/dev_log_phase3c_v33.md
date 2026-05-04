@@ -801,3 +801,80 @@ Write-Host \"PID: \$(\$proc.Id)\"
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-04-19 12:43:39 bash -->
+### [Auto-Log] 2026-04-19 12:43:39 — DPPO v3.3 Training — Started
+
+**Command:** `find . -name "*.log" -type f | grep -E "(eval_rhc|train_dppo_v33)" | sort -r | head -10`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-19 12:43:43 bash -->
+### [Auto-Log] 2026-04-19 12:43:43 — DPPO v3.3 Training — Started
+
+**Command:** `grep -E "Update.*Reward|Peak|Final" /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/train_dppo_v33_20260413_033639.log | tail -20`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-19 12:44:05 bash -->
+### [Auto-Log] 2026-04-19 12:44:05 — DPPO v3.3 Training — Started
+
+**Command:** `grep "Update.*225\|Best.*reward\|Final" /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/logs/train_dppo_v33_run2_20260414.log | head -15`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:15:28 bash -->
+### [Auto-Log] 2026-04-29 15:15:28 — DPPO v3.3 Training — Started
+
+**Command:** `grep -n "compute_gae\|advantages_t = " /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/scripts/train_dppo_v33.py`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:15:39 bash -->
+### [Auto-Log] 2026-04-29 15:15:39 — DPPO v3.3 Training — Started
+
+**Command:** `grep -n "hover_anchor_prob\|pos_end\|initial_pos_range" /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/scripts/train_dppo_v33.py`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:19:12 bash -->
+### [Auto-Log] 2026-04-29 15:19:12 — Expert Data Collection
+
+**Command:** `cd "/c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && grep -A 10 -B 5 "v33\|v3.3" scripts/collect_data.py`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:19:19 bash -->
+### [Auto-Log] 2026-04-29 15:19:19 — Diffusion v3.3 Training — Started
+
+**Command:** `cd "/c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && grep -B 5 -A 10 "collect_data\|expert_demos_v33\|initial_pos_range" scripts/train_diffusion_v33.py | head -80`
+
+**Output:**
+```
+(empty)
+```

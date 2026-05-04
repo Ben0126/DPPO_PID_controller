@@ -1,0 +1,75 @@
+# Vision-DPPO v4.0 RL Training Configuration
+# Used ONLY for ReinFlow rollout collection — NOT for evaluation.
+# Key differences vs quadrotor_v4.yaml:
+#   1. Larger initial_vel_range → drone starts with random velocity (OOD from step 0)
+#   2. Stronger disturbances → forces recovery scenarios during each episode
+# Goal: RL training sees OOD states and learns recovery, not just hover-at-origin.
+
+quadrotor:
+  mass: 0.5
+  arm_length: 0.17
+  inertia: [0.0023, 0.0023, 0.004]
+  gravity: 9.81
+  motor_max_thrust: 4.0
+  motor_time_constant: 0.02
+  drag_coeff: 0.01
+  torque_coeff: 0.016
+
+timing:
+  dt_inner: 0.005
+  dt_outer: 0.02
+  n_inner_steps: 4
+
+ctbr:
+  F_c_max: 16.0
+  omega_max_roll: 6.0
+  omega_max_pitch: 6.0
+  omega_max_yaw: 3.0
+
+indi:
+  kp_roll: 4.0
+  kp_pitch: 4.0
+  kp_yaw: 2.5
+  tau_max_roll: 0.5
+  tau_max_pitch: 0.5
+  tau_max_yaw: 0.15
+
+environment:
+  max_episode_steps: 500
+  position_bound: 5.0
+  max_tilt_deg: 60.0
+  initial_pos_range: 0.1          # same as eval — target=init_pos (hover mode)
+  initial_vel_range: 0.3          # 6× larger than eval (0.05) — OOD velocity at reset
+  target_type: "hover"
+  waypoint_change_interval: 3.0
+  waypoint_range: 2.0
+
+reward:
+  reward_type: "gaussian"
+  sigma_pos: 0.10
+  sigma_z: 0.015
+  sigma_vel: 1.0
+  sigma_ang: 1.0
+  w_pos: 0.55
+  w_z: 0.20
+  w_vel: 0.2
+  w_ang: 0.2
+  w_action: 0.005
+  alive_bonus: 0.0
+  crash_penalty: 10.0
+
+domain_randomization:
+  enabled: true
+  sky_color_range: 40
+  ground_color_range: 40
+  brightness_range: [0.7, 1.3]
+  focal_scale_range: [0.30, 0.50]
+  crosshair_size_delta: 2
+  per_frame_noise_sigma: 5
+
+disturbance:
+  enabled: true
+  magnitude: 1.0          # Run 9: 3.3× eval (0.3N), down from Run 8's 2.0N — less V variance
+  torque_magnitude: 0.08
+  probability: 0.01
+  duration: 0.3           # 3× longer than eval — sustained pushes

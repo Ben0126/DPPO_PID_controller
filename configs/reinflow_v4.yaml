@@ -1,0 +1,45 @@
+# ReinFlow v4.0 Configuration
+# Advantage-weighted Flow Matching RL fine-tuning (CTBR + INDI)
+# Run 20: Early Ramp (n_hover_updates=100 → stop at peak, longer ramp)
+#   - Run 19: n_hover_updates=400 caused over-training; policy peaked at u200 (hover update 100)
+#     then monotonically declined 0.695→0.250 over 300 more hover updates
+#   - n_hover_updates=100 matches the demonstrated peak; ramp starts immediately after
+#   - n_ramp_updates=400 (was 100): gradual curriculum 0.1→1.5m over 400 updates
+#   - pos_end=1.5m (was 0.5m): hover is solid, push toward wider positions
+#   - Structure: 100 warmup + 100 hover + 400 ramp + 100 OOD = 700 total
+
+rl:
+  learning_rate: 1.0e-7              # Run 19: 5e-7→1e-7 — policy changes 5× slower; prevents VLoss spike (30→~6)
+  value_lr: 1.0e-3
+  value_hidden_dim: 256
+  n_rollout_steps: 4096
+  n_epochs: 1
+  mini_batch: 256
+  gamma: 0.99
+  gae_lambda: 0.95
+  advantage_beta: 0.1
+  grad_clip: 1.0
+  value_warmup_updates: 100       # Run 17: 200→100, more RL gradient steps in hover regime
+  vloss_gate: 10.0
+  vloss_best_threshold: 100.0
+  save_freq_ckpt: 10
+  total_updates: 700
+  lambda_bc: 0.01                 # Run 18: 0.1→0.01 — allow RL to dominate BC; 0.1 locked policy near pretrained (thrust bias unfixed)
+  demo_path: data/expert_demos_v4.h5
+  demo_episodes: 100
+  # crash_penalty_rl: NOT set — use env default (10.0), no train/eval mismatch
+
+curriculum:
+  enabled: true
+  n_hover_updates: 100           # Run 20: 400→100 — Run 19 showed peak at hover update 100 (u200); further hover training only degraded
+  n_ramp_updates: 400            # Run 20: 100→400 — extend ramp to expose policy to diverse positions
+  pos_start: 0.1
+  vel_start: 0.05
+  pos_end: 1.5                   # Run 20: 0.5→1.5m — hover solid; push toward wider positions
+  vel_end: 0.5
+  hover_anchor_prob: 0.2         # proven effective in Run 12 — keep
+
+logging:
+  tensorboard_log: "./logs/reinflow_v4/"
+  save_path: "./checkpoints/reinflow_v4/"
+  save_freq: 50

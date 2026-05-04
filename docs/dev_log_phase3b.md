@@ -2429,3 +2429,387 @@ find . -name "*.log" -newer logs/train_dppo_run5_20260411_174353.log 2>/dev/null
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-04-20 14:08:23 bash -->
+### [Auto-Log] 2026-04-20 14:08:23 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/flow_policy_v4/20260420_034314/best_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1 | tee validation_results/eval_rhc_v4_bc.txt`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-21 02:24:42 bash -->
+### [Auto-Log] 2026-04-21 02:24:42 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260420_143930/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1 | tee validation_results/eval_rhc_v4_reinflow_run1.txt`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-21 13:11:24 bash -->
+### [Auto-Log] 2026-04-21 13:11:24 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260421_022532/best_reinflow_model.pt \
+    --n-episodes 50 2>&1 | tee validation_results/eval_rhc_v4_reinflow_run2.txt`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-21 13:15:42 bash -->
+### [Auto-Log] 2026-04-21 13:15:42 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/flow_policy_v4/20260420_034314/best_model.pt \
+    --n-episodes 20 --n-inference-steps 5 2>&1 | tail -10`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-23 14:05:17 bash -->
+### [Auto-Log] 2026-04-23 14:05:17 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && nohup python -u -m scripts.evaluate_rhc_v4 \
+  --flow-model checkpoints/reinflow_v4/reinflow_v4_20260423_022518/best_reinflow_model.pt \
+  --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+  --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+  --n-episodes 50 >> validation_results/eval_rhc_v4_reinflow_run7.txt 2>&1 &
+echo "PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-23 14:43:51 bash -->
+### [Auto-Log] 2026-04-23 14:43:51 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+  --flow-model checkpoints/flow_policy_v4/20260420_034314/best_model.pt \
+  --n-inference-steps 5 \
+  --n-episodes 20 2>&1 | tail -10`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-26 06:23:04 bash -->
+### [Auto-Log] 2026-04-26 06:23:04 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260425_163547/best_reinflow_model.pt \
+    --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-27 16:51:45 bash -->
+### [Auto-Log] 2026-04-27 16:51:45 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260427_053322/best_reinflow_model.pt \
+    --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1 | tee logs/eval_run10_best.log &
+echo "best PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-27 16:51:51 bash -->
+### [Auto-Log] 2026-04-27 16:51:51 — RHC Evaluation
+
+**Command:** `source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260427_053322/final_reinflow_model.pt \
+    --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1 | tee logs/eval_run10_final.log &
+echo "final PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-27 17:08:14 bash -->
+### [Auto-Log] 2026-04-27 17:08:14 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260427_053322/final_reinflow_model.pt \
+    --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-28 13:16:46 bash -->
+### [Auto-Log] 2026-04-28 13:16:46 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260428_012833/final_reinflow_model.pt \
+    --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 2>&1 | grep -E "Ep|Results|RMSE|Crash|Gate"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 14:51:03 bash -->
+### [Auto-Log] 2026-04-29 14:51:03 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+  --model checkpoints/reinflow_v4/reinflow_v4_20260429_051755/best_reinflow_model.pt \
+  --episodes 50 2>&1 | tee logs/eval_run12_best.log &
+echo "Best ckpt eval PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 14:51:30 bash -->
+### [Auto-Log] 2026-04-29 14:51:30 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+  --flow-model checkpoints/reinflow_v4/reinflow_v4_20260429_051755/best_reinflow_model.pt \
+  --n-episodes 50 2>&1 | tee logs/eval_run12_best.log &
+echo "Best ckpt eval PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 14:52:07 bash -->
+### [Auto-Log] 2026-04-29 14:52:07 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+  --flow-model checkpoints/reinflow_v4/reinflow_v4_20260429_051755/final_reinflow_model.pt \
+  --n-episodes 50 2>&1 | tee logs/eval_run12_final.log &
+echo "Final ckpt eval PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 14:53:14 bash -->
+### [Auto-Log] 2026-04-29 14:53:14 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.evaluate_rhc_v4 \
+  --flow-model checkpoints/reinflow_v4/reinflow_v4_20260429_051755/update_450.pt \
+  --n-episodes 50 2>&1 | tee logs/eval_run12_u450.log &
+echo "u450 eval PID: $!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-30 14:17:40 bash -->
+### [Auto-Log] 2026-04-30 14:17:40 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260430_024624/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 \
+    --output-dir evaluation_results/run13_best/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-01 02:43:49 bash -->
+### [Auto-Log] 2026-05-01 02:43:49 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260430_151349/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 \
+    --output-dir evaluation_results/run14_best/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-01 02:44:56 bash -->
+### [Auto-Log] 2026-05-01 02:44:56 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/flow_policy_v4/20260420_034314/best_model.pt \
+    --n-episodes 20 \
+    --output-dir evaluation_results/bc_pretrained/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-01 02:47:03 bash -->
+### [Auto-Log] 2026-05-01 02:47:03 — RHC Evaluation
+
+**Command:** `grep -n "dr_enabled\|QuadrotorVisualEnv" "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/scripts/evaluate_rhc_v4.py"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-01 10:01:45 bash -->
+### [Auto-Log] 2026-05-01 10:01:45 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260501_025225/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 \
+    --output-dir evaluation_results/run15_best/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-01 10:05:25 bash -->
+### [Auto-Log] 2026-05-01 10:05:25 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260429_051755/best_reinflow_model.pt \
+    --n-episodes 20 \
+    --output-dir evaluation_results/run12_actual_best/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-01 10:07:19 bash -->
+### [Auto-Log] 2026-05-01 10:07:19 — RHC Evaluation
+
+**Command:** `grep -n "imu_tensor\|img_tensor\|normalize\|/255" "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller/scripts/evaluate_rhc_v4.py" | head -15`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-02 04:51:54 bash -->
+### [Auto-Log] 2026-05-02 04:51:54 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260501_100937/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 50 \
+    --output-dir evaluation_results/run16_best/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-02 04:54:35 bash -->
+### [Auto-Log] 2026-05-02 04:54:35 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260501_100937/update_100.pt \
+    --n-episodes 20 \
+    --output-dir evaluation_results/run16_u100/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-02 05:03:54 bash -->
+### [Auto-Log] 2026-05-02 05:03:54 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260501_100937/best_reinflow_model.pt \
+    --n-inference-steps 10 \
+    --n-episodes 20 \
+    --output-dir evaluation_results/run16_best_10steps/ 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-03 03:45:11 bash -->
+### [Auto-Log] 2026-05-03 03:45:11 — RHC Evaluation
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 --flow-model checkpoints/reinflow_v4/reinflow_v4_20260502_162154/best_reinflow_model.pt --n-episodes 50 2>&1 | tee logs/eval_run19.log`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-04 08:26:34 bash -->
+### [Auto-Log] 2026-05-04 08:26:34 — RHC Evaluation
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && git add scripts/collect_data_v4.py scripts/collect_data_v4_approach.py scripts/evaluate_rhc_v4.py scripts/merge_expert_demos.py scripts/train_flow_v4.py scripts/train_ppo_expert_v4.py scripts/train_reinflow_v4.py scripts/validate_srt_hypothesis.py && echo "staged scripts"`
+
+**Output:**
+```
+(empty)
+```

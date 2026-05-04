@@ -192,3 +192,278 @@ parser.add_argument('--v33', action='store_true',
                                    --output data/expert_demos_v33.h5 \
                                    --v33
 ```
+
+---
+<!-- auto-log 2026-04-19 16:52:08 bash -->
+### [Auto-Log] 2026-04-19 16:52:08 — Expert Data Collection
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.collect_data_v4 \
+  --model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+  --norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+  --output data/expert_demos_v4_test.h5 \
+  --n-episodes 5 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-19 16:52:31 bash -->
+### [Auto-Log] 2026-04-19 16:52:31 — Expert Data Collection
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -u -m scripts.collect_data_v4 \
+  --model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+  --norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+  --output data/expert_demos_v4.h5 \
+  --n-episodes 1000 >> validation_results/collect_v4_log.txt 2>&1 &
+echo "PID=$!"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:18:55 bash -->
+### [Auto-Log] 2026-04-29 15:18:55 — Expert Data Collection
+
+**Command:** `cd "/c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && grep -n "n_episodes\|max_episode_steps" scripts/collect_data.py`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:19:04 bash -->
+### [Auto-Log] 2026-04-29 15:19:04 — Expert Data Collection
+
+**Command:** `cd "/c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && grep -r "collect_data\|expert_demos" scripts/ --include="*.py" | grep -v ".pyc"`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 15:19:32 bash -->
+### [Auto-Log] 2026-04-29 15:19:32 — Expert Data Collection
+
+**Command:** `cd "/c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && grep -A 30 "collect_data" scripts/train_ppo_expert.py 2>/dev/null | head -40`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 16:03:52 bash -->
+### [Auto-Log] 2026-04-29 16:03:52 — Expert Data Collection
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.collect_data_v4_approach \
+    --model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-episodes 9 --dry-run --deterministic-range --verbose`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 16:08:47 bash -->
+### [Auto-Log] 2026-04-29 16:08:47 — Expert Data Collection
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.collect_data_v4_approach \
+    --model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --output data/expert_demos_v4_approach.h5 \
+    --n-episodes 300 2>&1 | tee logs/collect_approach_run13.log`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 17:12:55 edit -->
+### [Auto-Log] 2026-04-29 17:12:55 — Script Fix
+
+**File:** `scripts\collect_data_v4_approach.py`
+
+**Before:**
+```python
+APPROACH_RANGES = [1.0, 1.5, 2.0]
+
+
+def collect_data(args):
+    base_env = QuadrotorEnvV4(config_path=args.quadrotor_config)
+    env = QuadrotorVisualEnv(base_env, image_size=args.image_size, dr_enabled=True)
+```
+
+**After:**
+```python
+APPROACH_RANGES = [1.0, 1.5, 2.0]
+
+
+def _parse_csv_floats(s: str):
+    return [float(x.strip()) for x in s.split(',') if x.strip()]
+
+
+def collect_data(args):
+    base_env = QuadrotorEnvV4(config_path=args.quadrotor_config)
+    env = QuadrotorVisualEnv(base_env, image_size=args.image_size, dr_enabled=True)
+
+    pos_ranges = _parse_csv_floats(args.pos_ranges) if args.pos_ranges else APPROACH_RANGES
+    vel_ranges = _parse_csv_floats(args.vel_ranges) if args.vel_ranges else None
+    print(f"pos_ranges (m): {pos_ranges}")
+    print(f"vel_ranges (m/s): {vel_ranges if vel_ranges else f'config default ({base_env.initial_vel_range})'}")
+```
+
+---
+<!-- auto-log 2026-04-29 17:13:03 edit -->
+### [Auto-Log] 2026-04-29 17:13:03 — Script Fix
+
+**File:** `scripts\collect_data_v4_approach.py`
+
+**Before:**
+```python
+rng = np.random.default_rng(args.seed)
+    total_steps = 0
+    ep_lengths_by_range = {r: [] for r in APPROACH_RANGES}
+    crashes_by_range = {r: 0 for r in APPROACH_RANGES}
+
+    try:
+        for ep in tqdm(range(args.n_episodes), desc="Approach episodes"):
+            pos_range_now = APPROACH_RANGES[ep % len(APPROACH_RANGES)] \
+                if args.deterministic_range \
+                else float(rng.choice(APPROACH_RANGES))
+            base_env.initial_pos_range = pos_range_now
+```
+
+**After:**
+```python
+rng = np.random.default_rng(args.seed)
+    total_steps = 0
+    ep_lengths_by_range = {r: [] for r in pos_ranges}
+    crashes_by_range = {r: 0 for r in pos_ranges}
+
+    try:
+        for ep in tqdm(range(args.n_episodes), desc="Approach episodes"):
+            pos_range_now = pos_ranges[ep % len(pos_ranges)] \
+                if args.deterministic_range \
+                else float(rng.choice(pos_ranges))
+            base_env.initial_pos_range = pos_range_now
+            if vel_ranges is not None:
+                vel_range_now = vel_ranges[ep % len(vel_ranges)] \
+                    if args.deterministic_range \
+                    else float(rng.choice(vel_ranges))
+                base_env.initial_vel_range = vel_range_now
+```
+
+---
+<!-- auto-log 2026-04-29 17:13:09 edit -->
+### [Auto-Log] 2026-04-29 17:13:09 — Script Fix
+
+**File:** `scripts\collect_data_v4_approach.py`
+
+**Before:**
+```python
+ep_grp.attrs['initial_pos_range'] = pos_range_now
+```
+
+**After:**
+```python
+ep_grp.attrs['initial_pos_range'] = pos_range_now
+                if vel_ranges is not None:
+                    ep_grp.attrs['initial_vel_range'] = base_env.initial_vel_range
+```
+
+---
+<!-- auto-log 2026-04-29 17:13:15 edit -->
+### [Auto-Log] 2026-04-29 17:13:15 — Script Fix
+
+**File:** `scripts\collect_data_v4_approach.py`
+
+**Before:**
+```python
+hf.attrs['action_space'] = 'ctbr'
+            hf.attrs['version']      = 'v4_approach'
+            hf.attrs['initial_pos_ranges'] = np.array(APPROACH_RANGES, dtype=np.float32)
+```
+
+**After:**
+```python
+hf.attrs['action_space'] = 'ctbr'
+            hf.attrs['version']      = 'v4_approach'
+            hf.attrs['initial_pos_ranges'] = np.array(pos_ranges, dtype=np.float32)
+            if vel_ranges is not None:
+                hf.attrs['initial_vel_ranges'] = np.array(vel_ranges, dtype=np.float32)
+```
+
+---
+<!-- auto-log 2026-04-29 17:13:22 edit -->
+### [Auto-Log] 2026-04-29 17:13:22 — Script Fix
+
+**File:** `scripts\collect_data_v4_approach.py`
+
+**Before:**
+```python
+parser.add_argument('--n-episodes', type=int, default=300)
+```
+
+**After:**
+```python
+parser.add_argument('--n-episodes', type=int, default=300)
+    parser.add_argument('--pos-ranges', type=str, default=None,
+                        help='Comma-separated initial_pos_range list (m). Default: 1.0,1.5,2.0')
+    parser.add_argument('--vel-ranges', type=str, default=None,
+                        help='Comma-separated initial_vel_range list (m/s). '
+                             'If set, overrides config initial_vel_range per episode. '
+                             'Use 1.0,1.5,2.0 for high-speed incoming demos.')
+```
+
+---
+<!-- auto-log 2026-04-29 17:18:25 bash -->
+### [Auto-Log] 2026-04-29 17:18:25 — Expert Data Collection
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.collect_data_v4_approach \
+    --model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --pos-ranges 1.0,1.5,2.0 \
+    --vel-ranges 1.0,1.5,2.0 \
+    --n-episodes 9 --dry-run --deterministic-range --verbose`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-04-29 17:21:17 bash -->
+### [Auto-Log] 2026-04-29 17:21:17 — Expert Data Collection
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.collect_data_v4_approach \
+    --model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --norm  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --pos-ranges 1.0,1.5,2.0 \
+    --vel-ranges 1.0,1.5,2.0 \
+    --output data/expert_demos_v4_approach.h5 \
+    --n-episodes 300 2>&1 | tee logs/collect_incoming_run13.log`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-04 08:22:11 bash -->
+### [Auto-Log] 2026-05-04 08:22:11 — Expert Data Collection
+
+**Command:** `cd c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && ls scripts/ | sort && echo "---" && ls scripts/collect_data_v4*.py scripts/merge*.py scripts/collect_data_v4_approach.py 2>/dev/null`
+
+**Output:**
+```
+(empty)
+```

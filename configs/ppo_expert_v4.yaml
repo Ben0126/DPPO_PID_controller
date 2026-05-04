@@ -1,0 +1,36 @@
+# PPO Expert Training Configuration — v4.0
+# Phase 1: State-based PPO for CTBR action space + INDI inner-loop
+
+training:
+  total_timesteps: 3000000
+  learning_rate: 0.0003           # 3e-4 (linearly annealed to 0)
+  n_steps: 4096                   # rollout length per update
+  batch_size: 256                 # mini-batch size
+  gamma: 0.99                    # discount factor
+  gae_lambda: 0.95               # GAE lambda
+  clip_range: 0.2                # PPO clip parameter (annealed to clip_range_end)
+  clip_range_end: 0.05           # final clip range at end of training
+  n_epochs: 10                   # optimization epochs per update (KL guard prevents overtraining)
+  ent_coef: 0.001                # entropy coefficient
+  vf_coef: 1.5                   # value function loss coefficient
+  max_grad_norm: 0.5             # gradient clipping
+  target_kl: 0.04                # KL early stopping threshold
+  critic_lr_multiplier: 3.0      # critic LR = actor LR × 3
+
+network:
+  hidden_dim: 256
+  critic_hidden_dim: 256
+  num_layers: 2
+  activation: "tanh"
+
+logging:
+  tensorboard_log: "./logs/ppo_expert_v4/"
+  save_path: "./checkpoints/ppo_expert_v4/"
+  checkpoint_freq: 100000
+  eval_freq: 50000
+  eval_episodes: 10
+
+quick_test:
+  enabled: false
+  timesteps: 50000
+  hidden_dim: 64

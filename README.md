@@ -157,12 +157,62 @@ Phase 4: Evaluation
 Phase 5: Hardware Deployment
          [ ]  Jetson Orin Nano + TensorRT (FCN decoder pruned before export)
          [ ]  Real flight testing (with wind disturbance)
+
+─────────── v4.0 Architectural Pivot (2026-04-19) ───────────
+
+Validation: BC-MLP 50/50 crash → covariate shift confirmed (latency not root cause)
+
+Phase 0: INDI Hover Gate
+         [✓]  DONE — tilt 0.00°, omega 0.000 rad/s (disturbances disabled)
+
+Phase 1: CTBR PPO Expert (QuadrotorEnvV4 + INDI)
+         [✓]  DONE — RMSE 0.0649m, 0 crashes (ckpt 20260419_142245, best of 2 runs)
+
+Phase 2: FPV Data Collection v4.0 (CTBR demos)
+         [✓]  DONE — expert_demos_v4.h5 (1000 ep, 500k steps, 3.9GB, 0 crashes)
+
+Phase 3: Flow Matching Policy (replaces DDPM)
+         [✓]  3a: Supervised pre-training — DONE (best val=0.0630, ckpt 20260420_034314)
+              BC eval: RMSE=0.5216m, 50/50 crashes (gate FAIL — expected, covariate shift)
+         [✓]  3b: ReinFlow RL fine-tuning — 20 runs complete (2026-04-20 ~ 2026-05-03)
+              Run 1–7: engineering fixes (VLoss gate, BC reg, one-way latch) → RMSE stuck 0.51m
+              Run 8–9: OOD disturbance env attempts → gate never opened / no improvement
+              Run 10: Curriculum (hover → ramp 0.1→2.0m, 600 upd, λ_bc=0.1)
+                      final ckpt: RMSE 0.3005m 50/50, ~36 steps avg ← BEST EVAL RESULT (−42%)
+              Run 11: Curriculum v2 → ramp to 3.0m: RMSE 0.1418m artefact, instant crash at init
+              Run 12: Anchored Curriculum (hover_anchor=20%, crash_penalty_rl=1.0, pos_end=2.0m)
+                      best ckpt: train reward 0.8270; final ckpt RMSE 0.2975m — soft penalty mismatch
+              Runs 13–16: crash_penalty=10 restored, varied BC demos → RMSE stuck 0.51m (lambda_bc=0.1 lock)
+              Runs 17–18: w_action hover-ref, sigma_pos=0.30, lambda_bc=0.01 → VLoss spike 30+, collapse
+                          (LR=5e-7 too high: policy changes too fast → value targets jump)
+              Run 19 (LR=1e-7): VLoss spike solved; peaked 0.6948@u200; eval RMSE 0.5232m 50/50
+                      Training reward improved (0.529→0.695) but eval gap persists — crash at ~60 steps
+              Run 20 (early ramp n_hover=100, n_ramp=400, pos_end=1.5m): same ceiling 0.6948@u200
+              Diagnosis: training-eval gap confirmed. RL improves hover reward in-distribution
+                         but does not reduce crash rate. Crash at step 60 = same as BC baseline.
+
+Phase 4: Hardware Deployment
+         [ ]  ReinFlow 1-step inference (<16ms target)
+         [ ]  Jetson Orin Nano + TensorRT
 ```
 
-**Current status:** Phase 3d OneDP distillation complete (2026-04-15~16). Inference latency resolved (9.9ms ✓), but distillation quality insufficient — RMSE 0.271m vs teacher 0.104m.
-Root cause of distillation failure: ε-space distillation trains student uniformly across all timesteps t∈[0,99], but 1-step inference only uses t=99. Mismatch between training objective and inference path.
-Next: Phase 3d-v2 — rethinking distillation strategy (options: DPPO fine-tune 1-step student; self-consistency distillation at t=99 only; or accept 13Hz and focus on crash reduction).
-See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for detailed training analysis.
+**Current status (v4.0 ReinFlow — 2026-05-03):**
+20 ReinFlow runs complete. **Best eval RMSE: Run 10, 0.3005m (vs BC 0.5216m, −42%), 50/50 crashes, ~36 steps avg.** Key findings from Runs 13–20: (1) lambda_bc=0.1 locks policy near pretrained — eval RMSE unchanged regardless of training quality; (2) LR=5e-7 causes VLoss spike 30+ → collapse — fixed by LR=1e-7 in Run 19; (3) training reward ceiling 0.6948@u200 is stable, but eval RMSE stuck at 0.52m (training-eval gap). RL is improving hover reward in-distribution but the drone still crashes at ~60 steps — same as the BC baseline. The crash is not caused by VLoss instability or curriculum structure. Root cause: RL rollouts see short episodes; policy learns to maximise reward-per-step before crash rather than avoiding crashes. Next: address training-eval gap directly (longer rollouts, pre-crash state exposure, or reward reshaping for survival).
+
+v4.0 architectural pivot from v3.x:
+
+| Change | Old (v3.x) | New (v4.0) |
+|--------|-----------|-----------|
+| Action space | SRT (4D motor thrusts) | **CTBR** [F_c_norm, ω_x, ω_y, ω_z] |
+| Inner-loop | None (direct thrust) | **INDI** rate controller @ 200Hz |
+| Policy | DDPM (cosine schedule, 64× amplification) | **Flow Matching** (linear interpolant) |
+| RL fine-tuning | D²PPO | **ReinFlow** |
+
+Phase 0–3a complete. **Now: Phase 3b — ReinFlow RL fine-tuning (gate: BC RMSE < 0.15m).**
+Expert: `checkpoints/ppo_expert_v4/20260419_142245/` (RMSE 0.0649m). Data: `data/expert_demos_v4.h5` (3.9GB).
+Flow Matching: `checkpoints/flow_policy_v4/20260420_034314/best_model.pt` (best val=0.0630).
+See [RESEARCH_PLAN_v4.md](RESEARCH_PLAN_v4.md) for the full v4.0 roadmap.
+See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for v3.x detailed training analysis.
 
 ---
 
@@ -183,6 +233,35 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 ```
 
 ### Training Pipeline
+
+#### v4.0 (Current — CTBR + INDI + Flow Matching + ReinFlow)
+
+**Step 1: Train CTBR PPO Expert**
+
+```bash
+python -m scripts.train_ppo_expert_v4 --n-envs 8
+tensorboard --logdir ./logs/ppo_expert_v4/
+```
+
+Gate criteria: RMSE < 0.08m, crash = 0/50.
+
+**Step 2: Collect CTBR Expert Data (pending)**
+
+```bash
+python -m scripts.collect_data_v4 \
+    --model checkpoints/ppo_expert_v4/.../best_model.pt \
+    --norm  checkpoints/ppo_expert_v4/.../best_obs_rms.npz \
+    --output data/expert_demos_v4.h5
+```
+
+**Step 3–4: Flow Matching + ReinFlow (pending Phase 1 gate)**
+
+```bash
+python -m scripts.train_flow_v4 --config configs/flow_policy_v4.yaml
+python -m scripts.train_reinflow_v4 --pretrained checkpoints/flow_v4/.../best_model.pt
+```
+
+#### v3.x (Historical Reference)
 
 **Step 1: Train PPO Expert (must meet gate before proceeding)**
 
@@ -230,13 +309,16 @@ python -m scripts.evaluate_rhc \
 ```
 DPPO_PID_controller/
 ├── configs/
-│   ├── quadrotor.yaml           # Physics parameters, reward function
-│   ├── ppo_expert.yaml          # PPO hyperparameters
+│   ├── quadrotor.yaml           # Physics parameters (v3.x SRT)
+│   ├── quadrotor_v4.yaml        # Physics parameters (v4.0 CTBR + INDI)  ← NEW
+│   ├── ppo_expert.yaml          # PPO hyperparameters (v3.x)
+│   ├── ppo_expert_v4.yaml       # PPO hyperparameters (v4.0 CTBR)        ← NEW
 │   └── diffusion_policy.yaml    # Diffusion policy hyperparameters
 │
 ├── envs/
 │   ├── quadrotor_dynamics.py    # Pure 6-DOF physics (quaternion, RK4, motors)
-│   ├── quadrotor_env.py         # Gymnasium wrapper (15D obs, 4D action)
+│   ├── quadrotor_env.py         # SRT env (15D obs, 4D motor thrust)
+│   ├── quadrotor_env_v4.py      # CTBR env + INDI rate controller         ← NEW
 │   └── quadrotor_visual_env.py  # FPV image rendering wrapper
 │
 ├── models/
@@ -248,7 +330,8 @@ DPPO_PID_controller/
 │   └── vision_dppo_v31.py       # v3.1 policy (IMU Late Fusion + FCN Depth)
 │
 ├── scripts/
-│   ├── train_ppo_expert.py      # Phase 1
+│   ├── train_ppo_expert.py      # Phase 1 (v3.x SRT)
+│   ├── train_ppo_expert_v4.py   # Phase 1 v4.0 (CTBR + INDI)              ← NEW
 │   ├── collect_data.py          # Phase 2 (--v31 / --v32 flags for IMU+depth)
 │   ├── train_diffusion.py       # Phase 3a (baseline)
 │   ├── train_diffusion_v31.py   # Phase 3a v3.1 (finite-diff IMU — historical)
@@ -319,13 +402,14 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 ## Evaluation Metrics / 評估指標
 
-| Metric | Current Best | Phase 3c v3.3 Result | Target | Conference |
+| Metric | Current Best | v4.0 ReinFlow Result | Target | Conference |
 |--------|-------------|----------------------|--------|-----------|
-| Position RMSE | 0.069m (PPO) / **0.1039m** (v3.3 Run 1) | Run 1: 0.1039m / Run 2: 0.1335m / **OneDP: 0.2713m** | **<0.10m** | ICRA |
-| Crash Rate | 0% (PPO) / 100% (all diffusion runs) | 50/50 (all runs incl. OneDP) | **<50%** | CoRL |
-| Inference Latency | 74ms (10-step DDIM) | **9.9ms (OneDP 1-step ✓)** | **<16ms ✓ ACHIEVED** | CoRL/ICRA |
-| Control Frequency | ~13Hz (current) | **~100Hz (OneDP ✓)** | **>62Hz ✓ ACHIEVED** | ICRA |
-| IMU covariate shift (ax std ratio) | **1.4×** (v3.3 physics+norm) | 1.4× | <2× ✓ | — |
+| Position RMSE | 0.069m (PPO Expert) | **0.3005m** (Run 10, best eval) / 0.5232m (Run 19) | **<0.15m** | ICRA |
+| Crash Rate | 0% (PPO Expert) | **50/50** (all v4.0 runs) | **<50%** | CoRL |
+| Inference Latency | 8.2ms (v4.0 Flow 1-step) | **8.2ms ✓** | **<16ms ✓ ACHIEVED** | CoRL/ICRA |
+| Control Frequency | ~122Hz (v4.0 1-step) | **~122Hz ✓** | **>62Hz ✓ ACHIEVED** | ICRA |
+| Training reward (hover) | 0.695 (Run 19/20 peak) | 0.6948@u200 | improve eval, not train | — |
+| Training-eval gap | RMSE 0.52m despite train reward 0.70 | **Unresolved** | close gap | — |
 
 ---
 

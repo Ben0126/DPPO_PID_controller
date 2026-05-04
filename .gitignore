@@ -38,6 +38,16 @@ evaluation_results/
 data/*.h5
 data/*.pkl
 data/v31_mmap/
+data/v32_mmap/
+data/v33_mmap/
+
+# Generated evaluation / validation outputs
+validation_results/
+evaluation_results/
+
+# Temporary batch/shell launch files
+logs/*.bat
+logs/*.sh
 
 # Media / artifacts
 *.png

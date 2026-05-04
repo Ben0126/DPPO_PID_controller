@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.8
-**Date:** 2026-04-16
-**Status:** Phase 3d OneDP distillation complete. Inference 9.9ms ✓ (<16ms target met). Quality insufficient: RMSE 0.271m vs teacher 0.104m, 50/50 crashes. Root cause: ε-space distillation mismatch. Next: Phase 3d-v2 strategy decision.
+**Version:** 3.9
+**Date:** 2026-05-03
+**Status:** v4.0 Phase 3b ReinFlow — 20 runs complete (2026-04-20 ~ 2026-05-03). Key finding: training reward ceiling 0.6948 (@u200) is stable across Runs 19-20, but training-eval gap persists (RMSE 0.52m). Root cause: RL improves hover reward in-distribution but does not reduce crash rate or RMSE in eval. LR=1e-7 (Run 19) solved VLoss spike; curriculum structure (n_hover, n_ramp) does not affect the ceiling. Next: address training-eval gap directly.
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -759,3 +759,186 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 
 **Detailed diagnostic log → [docs/dev_log.md](docs/dev_log.md)**
 **Conference submission guide → [docs/TOP_CONF_GUIDE.md](docs/TOP_CONF_GUIDE.md)**
+
+---
+
+---
+
+# v4.0 Architectural Pivot — 2026-04-19
+
+## Motivation: Validation Experiment Results
+
+**BC-Vision-MLP validation (50 episodes, 2ms inference):**
+
+| Metric | BC-MLP (2ms) | DDIM Diffusion (74ms) |
+|--------|-------------|----------------------|
+| Crashes | 50/50 (100%) | 50/50 (100%) |
+| Mean RMSE | 1.913m | 0.104m (best teacher) |
+| Inference | ~2ms | ~74ms |
+
+**Verdict: Inference latency is NOT the root cause of crashes.**
+BC-MLP with 2ms inference crashes at the same 100% rate as 74ms DDIM. The failure mode is **covariate shift** — no OOD recovery from pure behavioral cloning, regardless of speed. ReinFlow RL fine-tuning (closed-loop training) is the essential missing piece.
+
+## Phase 0: INDI Hover Gate — PASS (2026-04-19)
+
+INDI rate controller validated without disturbances (10 episodes):
+- Tilt: 0.00° (gate: <5°)
+- Angular rate: 0.000 rad/s (gate: <0.5 rad/s)
+- Translational drift (no position controller) ends episodes at steps 243–319 — expected.
+
+## v4.0 Architecture Changes
+
+| Component | v3.x | v4.0 |
+|-----------|------|------|
+| Action space | SRT: 4D motor thrusts [-1,1] | CTBR: [F_c_norm, ω_x, ω_y, ω_z] |
+| Inner-loop | None (direct thrust via dynamics) | INDI rate controller @ 200Hz |
+| Policy backbone | DDPM (cosine schedule, 64× amplification at t=99) | Flow Matching (linear interpolant, no amplification) |
+| RL fine-tuning | D²PPO (advantage-weighted DDPM loss) | ReinFlow (learnable noise σ_θ' + PPO) |
+
+**CTBR hover point:** F_c_norm = (mg/F_c_max)×2 - 1 = (4.905/16.0)×2 - 1 ≈ -0.387; ω_cmd = [0,0,0]
+
+**INDI formula (per 5ms physics step):**
+```
+ω_dot ≈ (ω - ω_prev) / dt
+ν = Kp × (ω_cmd - ω)            # P-controller virtual control
+τ_actual = torque_mixer @ f_actual  # actual post-lag motor torques
+τ_des = τ_actual + I × (ν - ω_dot) # INDI increment
+f_cmd = mixer_inv @ [F_c, τ_des]
+```
+
+## v4.0 Pipeline Status
+
+```
+Phase 0: INDI Hover Gate              ✓ PASS (2026-04-19)
+Phase 1: CTBR PPO Expert              ✓ DONE (2026-04-19)
+          checkpoints/ppo_expert_v4/20260419_142245/best_model.pt
+          RMSE 0.0649m, 0/50 crashes (best of 2 runs)
+Phase 2: FPV Data Collection v4.0     ✓ DONE (2026-04-19)
+          data/expert_demos_v4.h5 — 1000 ep, 500k steps, 3.9GB, 0 crashes
+Phase 3a: Flow Matching Supervised    ✓ DONE (2026-04-20)
+          scripts/train_flow_v4.py — 500 epochs, best val loss=0.0630
+          ckpt: checkpoints/flow_policy_v4/20260420_034314/best_model.pt
+          BC eval: RMSE=0.5216m, 50/50 crashes (gate FAIL — covariate shift expected)
+Phase 3b: ReinFlow RL Fine-tuning     ✓ 20 runs complete (2026-04-20 ~ 2026-05-03)
+          Best eval RMSE: Run 10, 0.3005m 50/50, 36 steps avg (−42% vs BC)
+          Training reward ceiling: 0.6948 (@u200, Runs 19-20); but eval RMSE stuck ~0.52m
+          Root cause of gap: RL optimises hover reward in-distribution; does not prevent crashes
+          Run 19 (LR=1e-7): solved VLoss spike (was 30+); training↑ but eval unchanged
+          Run 20 (early ramp): same ceiling 0.6948@u200 regardless of curriculum structure
+```
+
+## Phase 3b ReinFlow Run History
+
+**BC baseline (no RL):** RMSE=0.5216m, 50/50 crashes, inference 8.2ms
+
+| Run | Date | Key Changes | Best Reward | RMSE Eval | Steps avg | Notes |
+|-----|------|-------------|-------------|-----------|-----------|-------|
+| 1 | 04-20 | beta=0.1 lr=5e-6 w=30 | 0.6678@u37 | 0.5216m 50/50 | ~57 | VLoss collapse |
+| 2 | 04-21 | lr=1e-6 rollout=8192 w=50 | 0.6463@u~100 | 0.5130m 50/50 | ~57 | Slower collapse |
+| 3 | 04-21 | pos-filter+fixed_x1 | 0.5251 | no eval | — | PLoss=0 degenerate |
+| 4 | 04-22 | beta=0.05 lr=2e-6 w=100 | 0.6407@u107 | no eval | — | Collapse to −3.42 |
+| 5 | 04-22 | VLoss gate=10 (two-sided) | 0.6454@u415 | no eval | — | Gate oscillation 76% |
+| 6 | 04-22 | Same as Run 5 | 0.6479@u393 | no eval | — | Gate oscillation 63% |
+| 7 | 04-23 | One-way gate + BC λ=0.1 | 0.6491@u225 | 0.5142m 50/50 | ~57 | Hover-only, no OOD |
+| 8 | 04-23 | OOD env 2.0N disturbance | 0.4715 | no eval | — | Gate never opened |
+| 9 | 04-25 | OOD env 1.0N gate=20 | 0.5338@u252 | 0.5165m 50/50 | ~55 | Mild OOD failed |
+| **10** | **04-27** | **Curriculum hover→2.0m, n_ramp=200** | 0.6582@u223 | **0.3005m 50/50** | **36** | **First real RMSE reduction (−42%)** |
+| 11 | 04-28 | Curriculum v2 → 3.0m, preload Run 10 + value net | 0.3120@u40 | 0.1418m 50/50 | 14 | RMSE artefact: instant crash at init pos |
+| 12 | 04-29 | Anchor 20% + crash_penalty_rl=1.0 + pos_end=2.0m | 0.8270@u234 | 0.2975m 50/50 | 22 | Hover quality ↑↑; soft crash penalty → train/eval mismatch |
+| 13 | 04-30 | crash_penalty=10 (default), n_hover=100, pos_end=2.0m, fresh BC | ~0.82 | 0.51m 50/50 | ~60 | lambda_bc=0.1 locked policy near pretrained; same as BC eval |
+| 14 | 04-30 | hover-only BC demos (1000ep, pos=0.1m) to remove approach leakage | ~0.82 | 0.51m 50/50 | ~60 | Mixed demos caused state-conditioning leakage (high-vel actions→hover state) |
+| 15 | 05-01 | Exploration: varied BC demo composition | ~0.82 | ~0.51m 50/50 | ~60 | lambda_bc=0.1 consistently locks policy; all variants give ~BC baseline RMSE |
+| 16 | 05-01 | Exploration: minor HP sweep | ~0.82 | ~0.51m 50/50 | ~60 | Confirmed: with lambda_bc=0.1, training reward improves but eval RMSE stays 0.51m |
+| 17 | 05-01 | n_hover=100→400, n_ramp=250→100, pos_end=2.0→0.5m, w_action=0.005→0.05 (hover-ref) | 0.76@u~50 | no eval | — | VLoss spike 30+ at LR=5e-7; collapsed reward=0.284@u200; action_pen fix irrelevant (already hover-ref) |
+| 18 | 05-01 | sigma_pos=0.10→0.30 (reward cliff fix), lambda_bc=0.1→0.01 | ~0.70@u~60 | 0.51m 50/50 | ~61 | VLoss spike still (LR=5e-7 too high); sigma_pos insufficient alone; lambda_bc=0.01 confirmed needed |
+| **19** | **05-02** | **LR=5e-7→1e-7 (5× slower policy update)** | **0.6948@u200** | **0.5232m 50/50** | **~61** | **VLoss stable (7-17, self-corrects); peaked hover update 100, then monotonic decline; training↑ eval unchanged** |
+| 20 | 05-03 | n_hover=400→100, n_ramp=100→400, pos_end=0.5→1.5m | 0.6948@u200 | eval pending | — | Identical ceiling to Run 19; peak at u200 regardless of curriculum length |
+
+**Engineering issues resolved across Runs 1–20:**
+
+| Issue | Fix | Run |
+|-------|-----|-----|
+| VLoss threshold 2.0 too strict (ckpt never saved) | Raised to 100 | 1 (restart) |
+| PLoss≈0 (fixed_x1 + pos filter degenerate) | Removed both | 4 |
+| value_lr too low (VLoss slow to converge) | 3e-4 → 1e-3 | 5+ |
+| VLoss gate oscillation (63–76% in warmup) | One-way `vloss_gate_passed` flag | 7 |
+| Hover-only training (no OOD recovery via disturbances) | Separate RL env config with disturbances | 8+ |
+| OOD disturbances too strong (VLoss plateau) | 2.0N → 1.0N + raise gate to 20 | 9 |
+| Disturbance-based OOD ineffective (still no improvement) | Curriculum on `initial_pos_range` instead | 10 |
+| Pre-loading mismatched value net hurts learning | Skip pretrained-value loading for new distributions | confirmed Run 11 |
+| crash_penalty_rl=1.0 train/eval mismatch | Removed override; use env default 10.0 | 13 |
+| lambda_bc=0.1 locks policy near pretrained (eval RMSE unchanged) | lambda_bc=0.1→0.01 | 18 |
+| LR=5e-7 causes VLoss spike 30+ → policy collapse | LR=5e-7→1e-7 | 19 |
+| n_hover_updates=400 over-trains hover (peak at update 100, then decline) | n_hover=400→100 | 20 |
+
+## Phase 3b Diagnostic Summary (after 20 runs)
+
+**RMSE evolution:**
+- BC baseline → 0.5216m (50/50)
+- Engineering fixes (Runs 1–9) → 0.5142m best (no real improvement)
+- **Curriculum pos_end=2.0m (Run 10) → 0.3005m, 36 steps avg ← first real flight**
+- Curriculum pos_end=3.0m (Run 11) → 0.1418m, 14 steps avg ← artefact, instant crash
+- Anchored Curriculum (Run 12) → 0.2975m, 22 steps avg ← marginal gain, crashes faster
+- Runs 13–16 (lambda_bc=0.1): training reward ~0.82 but eval RMSE stuck at 0.51m ← lambda_bc lock confirmed
+- Runs 17–18 (VLoss spikes, LR=5e-7): collapsed to reward 0.256-0.284@u200 ← LR too high
+- **Run 19 (LR=1e-7): peaked 0.6948@u200, eval RMSE 0.5232m ← training-eval gap confirmed**
+- Run 20 (early ramp): same peak 0.6948@u200 ← ceiling independent of curriculum structure
+
+**Training-eval gap (new core finding after Run 19):**
+
+```
+                training reward    eval RMSE    eval steps    root cause
+BC baseline     0.529/step         0.5216m      ~60           covariate shift
+Run 10          0.658@u223         0.3005m       36           curriculum helps approach
+Run 12          0.827@u234         0.2975m       22           hover ↑↑; crash penalty mismatch
+Runs 13-16      ~0.82              ~0.51m        ~60          lambda_bc=0.1 lock
+Run 19          0.695@u200         0.5232m       ~61          LR fixed but gap persists
+```
+
+**RL is improving hover reward in-distribution but not preventing crashes.**
+Drone crashes at ~60 steps consistently — same as BC baseline despite training reward going from 0.53→0.70.
+Crash happens before first waypoint change (step 150), so target-jump is not the cause.
+Root cause: RL rollouts see crashes at step 60 → policy learns "get high reward before crash" not "avoid crash".
+
+**Two-axis tradeoff (Runs 1–12):**
+
+```
+                       hover ability    approach ability    eval RMSE / steps
+Run 7  (hover-only)    ★★★               ✗                  0.5142m / 57   (slow drift, gradual crash)
+Run 10 (ramp 2.0m)     ★★                ★★                 0.3005m / 36   (approach + can't stabilise)
+Run 11 (ramp 3.0m)     ✗                ★★★                 0.1418m / 14   (instant crash artefact)
+Run 12 (anchor+soft)   ★★★               ★★                 0.2975m / 22   (hover ↑↑; soft penalty → crashes faster)
+```
+
+**Key lessons:**
+- `hover_anchor_prob=0.2` works: training reward peak 0.6582 → 0.8270, Stage 3 reward 0.20 → 0.53
+- `crash_penalty_rl=1.0` backfires: policy learns crashes cost 1.0, eval penalises at 10.0 → shorter episodes
+- `lambda_bc=0.1` locks policy: eval RMSE identical to pretrained (0.51m) regardless of RL training quality
+- `LR=5e-7` causes VLoss spike: policy changes too fast → value targets jump → VLoss 30+ → collapse
+- `LR=1e-7` solves VLoss spike: self-correcting oscillations (7-17), no runaway collapse
+- **Training reward ceiling ~0.695**: policy peaks at hover RL update 100 regardless of n_hover_updates
+- **Training-eval gap**: despite training reward 0.53→0.70, eval RMSE stuck ~0.52m (no crash reduction)
+
+**Unresolved core problem: 50/50 crash rate + training-eval gap.**
+The RL is correctly optimising in-distribution reward but not generalising to eval crash prevention.
+Next direction: directly address the gap — e.g., LR annealing, eval-aligned reward shaping,
+longer rollout horizons to expose pre-crash states, or increasing n_rollout_steps.
+
+Detailed run analysis → [docs/dev_log_phase3b_v4.md](docs/dev_log_phase3b_v4.md)
+
+## New Files (v4.0)
+
+| File | Description |
+|------|-------------|
+| `envs/quadrotor_env_v4.py` | CTBR env + INDIRateController |
+| `configs/quadrotor_v4.yaml` | v4.0 physics + CTBR + INDI config |
+| `configs/ppo_expert_v4.yaml` | PPO hyperparams (same as v3.x Run 6) |
+| `scripts/train_ppo_expert_v4.py` | Phase 1 v4.0 training |
+| `scripts/collect_data_v4.py` | Phase 2 v4.0 data collection |
+| `scripts/validate_srt_hypothesis.py` | Validation: BC-MLP + INDI hover test |
+| `models/flow_policy_v4.py` | Flow Matching policy (replaces DDPM) |
+| `scripts/train_flow_v4.py` | Phase 3a supervised pre-training |
+| `configs/flow_policy_v4.yaml` | Flow Matching hyperparameters |
+| `RESEARCH_PLAN_v4.md` | Full v4.0 roadmap (Flow Matching + ReinFlow) |
+
+**Full v4.0 roadmap → [RESEARCH_PLAN_v4.md](RESEARCH_PLAN_v4.md)**

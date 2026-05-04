@@ -1,0 +1,94 @@
+# Vision-DPPO v4.0 Configuration
+# CTBR action space + INDI inner-loop rate controller
+
+# Quadrotor Physical Parameters (unchanged from v3.3)
+quadrotor:
+  mass: 0.5
+  arm_length: 0.17
+  inertia: [0.0023, 0.0023, 0.004]
+  gravity: 9.81
+  motor_max_thrust: 4.0           # N per motor (total 16N max collective)
+  motor_time_constant: 0.02       # s
+  drag_coeff: 0.01
+  torque_coeff: 0.016
+
+# Time Step Configuration (unchanged)
+timing:
+  dt_inner: 0.005                 # 200 Hz physics integration
+  dt_outer: 0.02                  # 50 Hz outer policy decision
+  n_inner_steps: 4
+
+# CTBR Action Space
+# Action: [F_c_norm, wx_norm, wy_norm, wz_norm] in [-1, 1]
+# F_c_norm -> collective thrust [0, 16N]
+# w_norm   -> body rates [-omega_max, omega_max] per axis
+ctbr:
+  F_c_max: 16.0                   # N (4 * motor_max_thrust)
+  omega_max_roll: 6.0             # rad/s
+  omega_max_pitch: 6.0            # rad/s
+  omega_max_yaw: 3.0              # rad/s
+
+# INDI Rate Controller
+# Runs once per inner physics step (200 Hz)
+# omega_dot estimated via numerical differentiation of angular rate
+indi:
+  kp_roll: 4.0
+  kp_pitch: 4.0
+  kp_yaw: 2.5
+  # Anti-windup: clamp desired torque to prevent saturation runaway
+  tau_max_roll: 0.5               # Nm
+  tau_max_pitch: 0.5              # Nm
+  tau_max_yaw: 0.15               # Nm
+
+# Environment Configuration (unchanged from v3.3)
+environment:
+  max_episode_steps: 500
+  position_bound: 5.0
+  max_tilt_deg: 60.0
+  initial_pos_range: 0.1
+  initial_vel_range: 0.05
+  target_type: "hover"
+  waypoint_change_interval: 3.0
+  waypoint_range: 2.0
+
+# Reward Function (same structure; w_action penalises deviation from hover CTBR)
+reward:
+  reward_type: "gaussian"
+  sigma_pos: 0.30                  # Run 18: 0.10→0.30 — gradient still 37% at 0.3m, 6% at 0.5m; eliminates reward cliff
+  # sigma_pos=0.10 caused reward cliff: gradient ~0 beyond 0.2m → no recovery signal → crash cascade
+  # sigma_pos=0.30: meaningful gradient up to 0.5-0.7m, policy can recover from drift
+  sigma_z: 0.015
+  sigma_vel: 1.0
+  sigma_ang: 1.0
+  w_pos: 0.55
+  w_z: 0.20
+  w_vel: 0.2
+  w_ang: 0.2
+  w_action: 0.05                  # Run 17: 0.005→0.05 to penalise thrust bias (Fc_n≈-0.45 vs hover -0.387)
+  alive_bonus: 0.0
+  crash_penalty: 10.0
+  # Run 14: brake penalty disabled (Run 13 showed exp(-dist/sigma) causes reverse
+  # reward hacking — policy escapes to dist>>sigma to nullify penalty)
+  w_brake: 0.0
+  sigma_brake: 0.3
+  # Run 15 candidate: radial brake only (penalise approach velocity, not hover)
+  # vel_radial = vel[:2] @ (-pos_error[:2] / (dist_xy + 1e-6))
+  # brake_pen  = w_brake * max(0, vel_radial)**2 * exp(-dist_xy / sigma_brake)
+
+# Domain Randomization (unchanged from v3.3)
+domain_randomization:
+  enabled: true
+  sky_color_range: 40
+  ground_color_range: 40
+  brightness_range: [0.7, 1.3]
+  focal_scale_range: [0.30, 0.50]
+  crosshair_size_delta: 2
+  per_frame_noise_sigma: 5
+
+# Disturbance Model (unchanged)
+disturbance:
+  enabled: true
+  magnitude: 0.3
+  torque_magnitude: 0.05
+  probability: 0.01
+  duration: 0.1

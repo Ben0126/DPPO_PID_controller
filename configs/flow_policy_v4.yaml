@@ -1,0 +1,47 @@
+# Flow Matching Policy v4.0 Configuration
+# CTBR action space, linear interpolant (no cosine schedule, no amplification)
+
+vision:
+  image_size: 64
+  channels: 3
+  T_obs: 2                        # stacked frames: 2 × RGB = 6 channels input
+  feature_dim: 256
+
+imu:
+  input_dim: 6                    # [gyro(3), specific_force_norm(3)]
+  hidden_dim: 64
+  feature_dim: 32
+  # global_cond_dim = vision(256) + imu(32) = 288
+
+unet:
+  down_dims: [256, 512]
+  kernel_size: 5
+  n_groups: 8
+  time_embed_dim: 128
+  # cond_dim = global_cond(288) + time_embed(128) = 416
+
+action:
+  T_pred: 8                       # prediction horizon
+  T_action: 4                     # execution horizon (RHC)
+  action_dim: 4                   # CTBR: [F_c_norm, wx, wy, wz]
+
+flow:
+  n_inference_steps: 1            # 1-step Euler (pure OT flow matching)
+  t_embed_scale: 999              # scale t∈[0,1] → int [0,999] for sinusoidal embed
+
+training:
+  batch_size: 512                 # RTX 3090 24GB can handle 512 at this scale
+  learning_rate: 0.0001           # 1e-4 AdamW
+  weight_decay: 0.01
+  num_epochs: 500
+  lr_scheduler: "cosine"
+  warmup_epochs: 10
+  grad_clip: 1.0
+  dataset_path: "data/expert_demos_v4.h5"
+  val_split: 0.05                 # 5% episodes held out for validation
+  num_workers: 0                  # data already in RAM; workers cause 5.8GB spawn-copy overhead on Windows
+
+logging:
+  tensorboard_log: "./logs/flow_policy_v4/"
+  save_path: "./checkpoints/flow_policy_v4/"
+  save_freq: 50                   # save checkpoint every N epochs
