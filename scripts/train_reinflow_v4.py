@@ -114,11 +114,13 @@ def collect_rollout(env: QuadrotorVisualEnv,
                     policy: FlowMatchingPolicyV4,
                     value_net: ValueNetworkV4,
                     n_steps: int, T_obs: int, T_action: int,
-                    device: torch.device) -> Dict:
+                    device: torch.device,
+                    sde_noise_std: float = 0.0) -> Dict:
     rollout = {
         'image_stacks': [],   # (N,) × (T_obs*3, H, W) uint8
-        'action_seqs':  [],   # (N,) × (action_dim, T_pred) float32
-        'noise_seqs':   [],   # (N,) × (action_dim, T_pred) float32 — x1 used in predict
+        'action_seqs':  [],   # (N,) × (action_dim, T_pred) float32 — SDE noisy action
+        'noise_seqs':   [],   # (N,) × (action_dim, T_pred) float32 — x1 initial noise
+        'mu_old':       [],   # (N,) × (action_dim, T_pred) float32 — deterministic μ_old
         'imu_data':     [],   # (N,) × (6,) float32
         'rewards':      [],
         'dones':        [],
@@ -141,17 +143,16 @@ def collect_rollout(env: QuadrotorVisualEnv,
         with torch.no_grad():
             global_cond = policy._encode(img_tensor, imu_tensor)  # (1, 288)
             value       = value_net(global_cond).item()
-            # Sample noise explicitly so we can store x1 for stable updates
-            x1 = torch.randn(1, policy.action_dim, policy.T_pred, device=device)
-            action_seq  = policy.predict_action(img_tensor, imu_tensor,
-                                                _fixed_x1=x1)
-            # (1, action_dim, T_pred)
+            x1       = torch.randn(1, policy.action_dim, policy.T_pred, device=device)
+            t_int    = policy._t_to_int(torch.ones(1, device=device))
+            v_old    = policy.flow_net(x1, t_int, global_cond)
+            mu_old_t = x1 - v_old
+            action_seq = mu_old_t + sde_noise_std * torch.randn_like(mu_old_t)
 
         action_seq_np = action_seq.squeeze(0).cpu().numpy()  # (action_dim, T_pred)
-        # T_pred steps, executed column-by-column: (action_dim, T_pred)
         actions_to_exec = action_seq_np.T  # (T_pred, action_dim)
-
-        noise_np = x1.squeeze(0).cpu().numpy()  # (action_dim, T_pred)
+        noise_np  = x1.squeeze(0).cpu().numpy()        # (action_dim, T_pred) — x1
+        mu_old_np = mu_old_t.squeeze(0).cpu().numpy()  # (action_dim, T_pred) — μ_old
 
         for a_idx in range(min(T_action, actions_to_exec.shape[0])):
             action = actions_to_exec[a_idx]
@@ -159,6 +160,7 @@ def collect_rollout(env: QuadrotorVisualEnv,
             rollout['image_stacks'].append(img_stack.copy())
             rollout['action_seqs'].append(action_seq_np.copy())  # (action_dim, T_pred)
             rollout['noise_seqs'].append(noise_np.copy())        # (action_dim, T_pred)
+            rollout['mu_old'].append(mu_old_np.copy())           # (action_dim, T_pred)
             rollout['imu_data'].append(imu_vec.copy())
             rollout['values'].append(value)
 
@@ -260,6 +262,9 @@ def train(args):
     vloss_gate           = rl_cfg.get('vloss_gate', 10.0)
     lambda_bc            = rl_cfg.get('lambda_bc', 0.0)
     total_updates        = rl_cfg['total_updates']
+    loss_type            = rl_cfg.get('loss_type', 'weighted')
+    sde_noise_std        = rl_cfg.get('sde_noise_std', 0.0)
+    clip_epsilon         = rl_cfg.get('clip_epsilon', 0.2)
 
     # Curriculum config
     with open(args.rl_config, 'r', encoding='utf-8') as f:
@@ -273,6 +278,10 @@ def train(args):
     cur_pos_end  = cur_cfg.get('pos_end',   cur_pos_start)
     cur_vel_end  = cur_cfg.get('vel_end',   cur_vel_start)
     cur_anchor_prob = cur_cfg.get('hover_anchor_prob', 0.0)
+    cur_swift_prob  = cur_cfg.get('swift_perturbation_prob', 0.0)
+    cur_swift_tilt  = cur_cfg.get('swift_perturb_tilt_deg', 30.0)
+    cur_swift_vel   = cur_cfg.get('swift_perturb_vel',      1.0)
+    cur_swift_term  = cur_cfg.get('swift_max_tilt_deg',     80.0)
 
     # Softened crash penalty during RL rollout (Run 12: prevents shock gradient
     # destroying hover behaviour when drone crashes during OOD ramp)
@@ -300,7 +309,11 @@ def train(args):
         base_env.disturbance_enabled = False   # no disturbances during curriculum
         base_env.initial_pos_range = cur_pos_start
         base_env.initial_vel_range = cur_vel_start
-        base_env.hover_anchor_prob = 0.0       # only enable post-gate
+        base_env.hover_anchor_prob       = 0.0  # only enable post-gate
+        base_env.swift_perturbation_prob = 0.0  # ditto — Swift kicks in at S2
+        base_env.swift_perturb_tilt_deg  = cur_swift_tilt
+        base_env.swift_perturb_vel       = cur_swift_vel
+        base_env.swift_max_tilt_deg      = cur_swift_term
 
     print(f"\n{'='*60}")
     print(f"ReinFlow v4.0 — Curriculum (CTBR + INDI + Flow Matching RL + BC Reg)")
@@ -330,21 +343,24 @@ def train(args):
         # ---- Curriculum: update env params ----
         if curriculum_enabled and vloss_gate_passed:
             if updates_since_gate <= cur_n_hover:
-                # Stage 1: hover stabilisation (no anchor needed yet)
+                # Stage 1: hover stabilisation (no anchor / no swift)
                 cur_pos = cur_pos_start
                 cur_vel = cur_vel_start
-                base_env.hover_anchor_prob = 0.0
+                base_env.hover_anchor_prob       = 0.0
+                base_env.swift_perturbation_prob = 0.0
             elif updates_since_gate <= cur_n_hover + cur_n_ramp:
-                # Stage 2: linear ramp + anchor (prevents catastrophic forgetting)
+                # Stage 2: linear ramp + anchor + swift perturbed init
                 t = (updates_since_gate - cur_n_hover) / cur_n_ramp
                 cur_pos = cur_pos_start + t * (cur_pos_end - cur_pos_start)
                 cur_vel = cur_vel_start + t * (cur_vel_end - cur_vel_start)
-                base_env.hover_anchor_prob = cur_anchor_prob
+                base_env.hover_anchor_prob       = cur_anchor_prob
+                base_env.swift_perturbation_prob = cur_swift_prob
             else:
-                # Stage 3: full OOD + anchor
+                # Stage 3: full OOD + anchor + swift
                 cur_pos = cur_pos_end
                 cur_vel = cur_vel_end
-                base_env.hover_anchor_prob = cur_anchor_prob
+                base_env.hover_anchor_prob       = cur_anchor_prob
+                base_env.swift_perturbation_prob = cur_swift_prob
             base_env.initial_pos_range = cur_pos
             base_env.initial_vel_range = cur_vel
 
@@ -357,6 +373,7 @@ def train(args):
             T_obs=vis_cfg['T_obs'],
             T_action=act_cfg['T_action'],
             device=device,
+            sde_noise_std=sde_noise_std,
         )
 
         advantages, returns = compute_gae(
@@ -368,6 +385,7 @@ def train(args):
         img_cpu   = torch.from_numpy(np.array(rollout['image_stacks'], dtype=np.uint8))
         act_cpu   = torch.FloatTensor(np.array(rollout['action_seqs']))
         noise_cpu = torch.FloatTensor(np.array(rollout['noise_seqs']))
+        mu_cpu    = torch.FloatTensor(np.array(rollout['mu_old']))
         imu_cpu   = torch.FloatTensor(np.array(rollout['imu_data']))
         adv_t     = torch.FloatTensor(advantages)
         ret_t     = torch.FloatTensor(returns)
@@ -397,6 +415,7 @@ def train(args):
         # ---- Policy update (skip during warmup) ----
         policy_loss_t = torch.tensor(0.0)
         frac_pos = (advantages > 0).mean()
+        epoch_clip_fracs, epoch_approx_kls, epoch_mean_ratios, epoch_lr_stds = [], [], [], []
         if not in_warmup:
             policy.train()
             demo_perm = torch.randperm(N_demo) if N_demo > 0 else None
@@ -410,8 +429,20 @@ def train(args):
                     imu_gpu  = imu_cpu[mb].to(device)
                     adv_gpu  = adv_t[mb].to(device)
 
-                    rl_loss = policy.compute_weighted_loss(
-                        imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta)
+                    if loss_type == 'clipped':
+                        noi_gpu = noise_cpu[mb].to(device)
+                        mu_gpu  = mu_cpu[mb].to(device)
+                        rl_loss, cf, kl, mr, lr_std = policy.compute_clipped_loss(
+                            imgs_gpu, imu_gpu, act_gpu,
+                            fixed_x1=noi_gpu, mu_old=mu_gpu, advantages=adv_gpu,
+                            sde_noise_std=sde_noise_std, clip_epsilon=clip_epsilon)
+                        epoch_clip_fracs.append(cf)
+                        epoch_approx_kls.append(kl)
+                        epoch_mean_ratios.append(mr)
+                        epoch_lr_stds.append(lr_std)
+                    else:
+                        rl_loss = policy.compute_weighted_loss(
+                            imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta)
 
                     # BC regularization: anchor policy to expert demos
                     if lambda_bc > 0 and N_demo > 0:
@@ -442,10 +473,18 @@ def train(args):
         writer.add_scalar('reinflow/value_loss',   value_loss_t.item(),  update)
         writer.add_scalar('reinflow/frac_pos_adv', float(frac_pos),      update)
         writer.add_scalar('reinflow/warmup',       int(in_warmup),       update)
+        if loss_type == 'clipped' and epoch_clip_fracs:
+            writer.add_scalar('ppo/clip_fraction', np.mean(epoch_clip_fracs), update)
+            writer.add_scalar('ppo/approx_kl',     np.mean(epoch_approx_kls), update)
+            writer.add_scalar('ppo/mean_ratio',    np.mean(epoch_mean_ratios), update)
+            writer.add_scalar('ppo/log_ratio_std', np.mean(epoch_lr_stds),     update)
+            writer.add_scalar('ppo/pct_action_oob',
+                              (act_cpu.abs() > 1.0).float().mean().item(),     update)
         if curriculum_enabled:
             writer.add_scalar('curriculum/pos_range', base_env.initial_pos_range, update)
             writer.add_scalar('curriculum/vel_range', base_env.initial_vel_range, update)
             writer.add_scalar('curriculum/anchor_prob', getattr(base_env, 'hover_anchor_prob', 0.0), update)
+            writer.add_scalar('curriculum/swift_prob',  getattr(base_env, 'swift_perturbation_prob', 0.0), update)
 
         if curriculum_enabled and vloss_gate_passed:
             if updates_since_gate <= cur_n_hover:

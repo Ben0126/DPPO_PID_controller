@@ -64,16 +64,18 @@ reward:
   w_z: 0.20
   w_vel: 0.2
   w_ang: 0.2
-  w_action: 0.05                  # Run 17: 0.005→0.05 to penalise thrust bias (Fc_n≈-0.45 vs hover -0.387)
+  w_action: 0.005                 # Run 21 Unshackled: 0.05→0.005 — un-cage aggressive maneuvers
+                                  # Run 17 raised this to 0.05 to fix thrust bias, but it also blocked
+                                  # the high body-rate commands needed for braking. Trade thrust-bias
+                                  # control for the policy's freedom to actuate hard.
   alive_bonus: 0.0
   crash_penalty: 10.0
-  # Run 14: brake penalty disabled (Run 13 showed exp(-dist/sigma) causes reverse
-  # reward hacking — policy escapes to dist>>sigma to nullify penalty)
-  w_brake: 0.0
-  sigma_brake: 0.3
-  # Run 15 candidate: radial brake only (penalise approach velocity, not hover)
-  # vel_radial = vel[:2] @ (-pos_error[:2] / (dist_xy + 1e-6))
-  # brake_pen  = w_brake * max(0, vel_radial)**2 * exp(-dist_xy / sigma_brake)
+  # Run 21 Unshackled: radial brake enabled (replaces Run 13 isotropic formula).
+  # Implementation in env: max(0, vel·pos_error/|pos_error|)^2 * exp(-dist/sigma)
+  # — only penalises *approaching* the target, hover/escape/tangential are free.
+  w_brake: 0.1
+  sigma_brake: 0.5                # Run 21: 0.3→0.5 — gradient still 37% at 0.5m
+                                  # (current eval RMSE), so signal reaches operating distance.
 
 # Domain Randomization (unchanged from v3.3)
 domain_randomization:

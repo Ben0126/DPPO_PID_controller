@@ -177,6 +177,11 @@ class QuadrotorEnvV4(gym.Env):
         self.time_since_target_change  = 0.0
         self.render_mode               = render_mode
 
+        # Per-episode termination tilt (Run 21: relaxed during swift episodes
+        # so that drones starting at 30° tilt have room to recover before
+        # the 60° standard cutoff terminates them prematurely).
+        self._current_max_tilt_deg = self.max_tilt_deg
+
         self.disturbance_active           = False
         self.disturbance_time_remaining   = 0.0
         self.disturbance_force            = np.zeros(3)
@@ -257,16 +262,34 @@ class QuadrotorEnvV4(gym.Env):
               options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
         super().reset(seed=seed)
 
-        # Anchored curriculum: with prob `hover_anchor_prob`, force a near-hover
-        # init (pos<=0.1m, vel<=0.05) to prevent catastrophic forgetting of hover.
-        # Set externally via env.hover_anchor_prob = 0.2 from training script.
-        anchor_prob = getattr(self, 'hover_anchor_prob', 0.0)
-        if anchor_prob > 0.0 and self.np_random.random() < anchor_prob:
+        # Three-way mutually exclusive init mode (Run 21 Unshackled DPPO):
+        #   anchor (prob = hover_anchor_prob)        → near-hover (forget-prevention)
+        #   swift  (prob = swift_perturbation_prob)  → tilted + fast (recovery training)
+        #   normal (remaining prob)                  → curriculum-controlled init
+        anchor_prob = getattr(self, 'hover_anchor_prob',       0.0)
+        swift_prob  = getattr(self, 'swift_perturbation_prob', 0.0)
+        r = self.np_random.random()
+
+        init_tilt_deg = 0.0
+        if r < anchor_prob:
             pos_range_now = 0.1
             vel_range_now = 0.05
+            self._current_max_tilt_deg = self.max_tilt_deg
+        elif r < anchor_prob + swift_prob:
+            # Swift-style perturbed init: drone starts tilted with non-zero
+            # velocity, forcing the policy to learn extreme recovery rather
+            # than only seeing easy from-rest trajectories. Termination tilt
+            # widened to swift_max_tilt_deg (default 80°) so policy has room
+            # to recover before crash trigger fires.
+            pos_range_now = self.initial_pos_range
+            vel_range_now = getattr(self, 'swift_perturb_vel',      1.0)
+            tilt_max      = getattr(self, 'swift_perturb_tilt_deg', 30.0)
+            init_tilt_deg = self.np_random.uniform(0.0, tilt_max)
+            self._current_max_tilt_deg = getattr(self, 'swift_max_tilt_deg', 80.0)
         else:
             pos_range_now = self.initial_pos_range
             vel_range_now = self.initial_vel_range
+            self._current_max_tilt_deg = self.max_tilt_deg
 
         init_pos = self.np_random.uniform(
             -pos_range_now, pos_range_now, size=3
@@ -277,7 +300,19 @@ class QuadrotorEnvV4(gym.Env):
             -vel_range_now, vel_range_now, size=3
         )
 
-        self.dynamics.reset(position=init_pos, velocity=init_vel)
+        # Build initial quaternion: random azimuthal direction with bounded tilt
+        if init_tilt_deg > 0.0:
+            phi   = self.np_random.uniform(-np.pi, np.pi)
+            theta = np.deg2rad(init_tilt_deg)
+            ax_x  = -np.sin(phi)
+            ax_y  =  np.cos(phi)
+            ct, st = np.cos(theta * 0.5), np.sin(theta * 0.5)
+            init_quat = np.array([ct, st * ax_x, st * ax_y, 0.0])
+        else:
+            init_quat = None
+
+        self.dynamics.reset(position=init_pos, velocity=init_vel,
+                            quaternion=init_quat)
         self.indi.reset()
 
         if self.target_type == "hover":
@@ -411,27 +446,25 @@ class QuadrotorEnvV4(gym.Env):
         ])
         action_pen = self.w_action * np.sum(action_dev**2)
 
-        # Brake penalty (Run 14: w_brake=0.0, disabled).
-        # Run 13 used isotropic formula exp(-dist/sigma)*v_xy^2 which caused
-        # reverse reward hacking: policy learned to escape to dist>>sigma to
-        # nullify the penalty, resulting in RMSE 0.51m (worse than Run 12).
-        #
-        # Run 15 candidate — radial-only brake (safe formula):
-        #   dist_xy     = np.sqrt(pos_error[0]**2 + pos_error[1]**2)
-        #   vel_radial  = np.dot(vel[:2], -pos_error[:2] / (dist_xy + 1e-6))
-        #   brake_pen   = self.w_brake * max(0.0, vel_radial)**2 \
-        #                 * np.exp(-dist_xy / self.sigma_brake)
-        # Penalises only inbound radial speed; hover/tangential/outbound = 0 penalty.
-        dist_xy   = np.sqrt(pos_error[0]**2 + pos_error[1]**2)
-        vel_xy_sq = vel[0]**2 + vel[1]**2
-        brake_pen = self.w_brake * np.exp(-dist_xy / self.sigma_brake) * vel_xy_sq
+        # Brake penalty (Run 21 Unshackled: radial-only formulation).
+        # pos_error = target - pos, so vel · pos_error > 0 means approaching target.
+        # vel_radial = approach speed (positive when moving toward target).
+        # Penalty active only when (a) approaching AND (b) close to target.
+        # Outbound / tangential / far → 0 penalty (defeats Run 13's reward-hacking
+        # escape strategy where the drone fled outside the sigma_brake radius).
+        dist_xy    = np.sqrt(pos_error[0]**2 + pos_error[1]**2)
+        vel_radial = (vel[0] * pos_error[0] + vel[1] * pos_error[1]) / (dist_xy + 1e-6)
+        brake_pen  = (self.w_brake * max(0.0, vel_radial)**2
+                      * np.exp(-dist_xy / self.sigma_brake))
 
         return pos_rew + z_rew + vel_rew + ang_rew - action_pen - brake_pen + self.alive_bonus
 
     def _check_termination(self) -> bool:
         if np.any(np.abs(self.dynamics.position) > self.position_bound):
             return True
-        if get_tilt_angle(self.dynamics.get_rotation_matrix()) > self.max_tilt_deg:
+        # Per-episode tilt limit (Run 21 termination curriculum):
+        # Swift episodes use swift_max_tilt_deg (≈80°), all others use max_tilt_deg (60°).
+        if get_tilt_angle(self.dynamics.get_rotation_matrix()) > self._current_max_tilt_deg:
             return True
         if self.dynamics.position[2] > 0.0:
             return True

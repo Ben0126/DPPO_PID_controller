@@ -24,10 +24,11 @@ Replaces DDPM with Conditional Flow Matching (linear interpolant / OT-CFM):
 No cosine schedule. Max velocity magnitude = ||ε - x_0|| = O(1).
 Avoids 64× amplification of DDPM at t=99.
 
-Architecture (same as v3.3):
-  VisionEncoder (CNN, 6ch → 256D) + IMUEncoder (MLP, 6D → 32D)
-  global_cond = cat([256D, 32D]) = 288D
-  FlowNet = ConditionalUnet1d with cond_dim = 288 + 128 = 416D
+Architecture (Hypothesis 3a — enlarged IMU encoder):
+  VisionEncoder (CNN, 6ch → 256D) + IMUEncoder (MLP, 6D → 128D)
+  global_cond = cat([256D, 128D]) = 384D
+  FlowNet = ConditionalUnet1d with cond_dim = 384 + 128 = 512D
+  tilt_head = Linear(128, 1)  — training-only auxiliary tilt supervision
 """
 
 import math
@@ -59,7 +60,7 @@ class FlowMatchingPolicyV4(nn.Module):
     def __init__(
         self,
         vision_feature_dim: int = 256,
-        imu_feature_dim: int = 32,
+        imu_feature_dim: int = 128,
         time_embed_dim: int = 128,
         down_dims: tuple = (256, 512),
         T_obs: int = 2,
@@ -74,7 +75,7 @@ class FlowMatchingPolicyV4(nn.Module):
         self.n_inference_steps = n_inference_steps
         self.t_embed_scale = t_embed_scale
 
-        global_cond_dim = vision_feature_dim + imu_feature_dim  # 288
+        global_cond_dim = vision_feature_dim + imu_feature_dim  # 384
 
         self.vision_encoder = VisionEncoder(
             in_channels=T_obs * 3,
@@ -82,10 +83,13 @@ class FlowMatchingPolicyV4(nn.Module):
         )
 
         self.imu_encoder = nn.Sequential(
-            nn.Linear(6, 64),
-            nn.Mish(),
-            nn.Linear(64, imu_feature_dim),
+            nn.Linear(6, 256),
+            nn.ReLU(),
+            nn.Linear(256, imu_feature_dim),  # imu_feature_dim=128
+            nn.ReLU(),
         )
+
+        self.tilt_head = nn.Linear(imu_feature_dim, 1)
 
         self.flow_net = ConditionalUnet1d(
             action_dim=action_dim,
@@ -110,8 +114,8 @@ class FlowMatchingPolicyV4(nn.Module):
             global_cond: (B, 288)
         """
         vis_feat = self.vision_encoder(images)      # (B, 256)
-        imu_feat = self.imu_encoder(imu)             # (B, 32)
-        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 288)
+        imu_feat = self.imu_encoder(imu)             # (B, 128)
+        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
 
     def _t_to_int(self, t: torch.Tensor) -> torch.Tensor:
         """Scale continuous t∈[0,1] → integer index for sinusoidal embedding."""
@@ -126,25 +130,32 @@ class FlowMatchingPolicyV4(nn.Module):
         images: torch.Tensor,
         imu: torch.Tensor,
         actions: torch.Tensor,
+        tilt_gt: Optional[torch.Tensor] = None,
+        lambda_tilt: float = 0.1,
     ) -> torch.Tensor:
         """
-        Compute flow matching loss.
+        Compute flow matching loss + optional auxiliary tilt supervision.
 
         Args:
-            images:  (B, T_obs*3, H, W)
-            imu:     (B, 6)
-            actions: (B, action_dim, T_pred)  CTBR in [-1, 1]
+            images:     (B, T_obs*3, H, W)
+            imu:        (B, 6)
+            actions:    (B, action_dim, T_pred)  CTBR in [-1, 1]
+            tilt_gt:    (B,) tilt angle in radians — enables auxiliary loss when provided
+            lambda_tilt: weight for tilt supervision term
 
         Returns:
-            loss: scalar MSE between predicted and target velocity
+            loss: scalar (flow_loss + lambda_tilt * tilt_loss when tilt_gt provided)
         """
         B = actions.shape[0]
         device = actions.device
 
-        global_cond = self._encode(images, imu)
+        # Inline encode to reuse imu_feat for tilt head
+        vis_feat = self.vision_encoder(images)             # (B, 256)
+        imu_feat = self.imu_encoder(imu)                   # (B, 128)
+        global_cond = torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
 
-        t = torch.rand(B, device=device)                 # (B,) ~ U[0,1]
-        eps = torch.randn_like(actions)                   # (B, 4, T_pred)
+        t = torch.rand(B, device=device)                   # (B,) ~ U[0,1]
+        eps = torch.randn_like(actions)                    # (B, 4, T_pred)
 
         t_expand = t[:, None, None]
         x_t = (1.0 - t_expand) * actions + t_expand * eps  # linear interpolant
@@ -153,7 +164,14 @@ class FlowMatchingPolicyV4(nn.Module):
         t_int = self._t_to_int(t)
         v_pred = self.flow_net(x_t, t_int, global_cond)
 
-        return F.mse_loss(v_pred, v_target)
+        flow_loss = F.mse_loss(v_pred, v_target)
+
+        if tilt_gt is not None:
+            tilt_pred = self.tilt_head(imu_feat).squeeze(-1)  # (B,)
+            tilt_loss = F.mse_loss(tilt_pred, tilt_gt)
+            return flow_loss + lambda_tilt * tilt_loss
+
+        return flow_loss
 
     # ------------------------------------------------------------------
     # RL fine-tuning (ReinFlow)
@@ -210,6 +228,48 @@ class FlowMatchingPolicyV4(nn.Module):
         mse = F.mse_loss(v_pred, v_target, reduction='none').mean(dim=[1, 2])  # (B,)
         return (weights * mse).mean()
 
+    def compute_clipped_loss(
+        self,
+        images:        torch.Tensor,
+        imu:           torch.Tensor,
+        actions_taken: torch.Tensor,
+        fixed_x1:      torch.Tensor,
+        mu_old:        torch.Tensor,
+        advantages:    torch.Tensor,
+        sde_noise_std: float,
+        clip_epsilon:  float,
+    ):
+        """PPO clipped surrogate via SDE Gaussian likelihood.
+
+        π_θ(a|x1,s) = N(a; x1 - v_θ(x1,1,s), σ²I)
+        log_ratio = -0.5/σ² × [||a−μ_new||² − ||a−μ_old||²]
+        """
+        B = actions_taken.shape[0]
+        sigma2 = sde_noise_std ** 2
+
+        global_cond = self._encode(images, imu)
+        t_batch = torch.ones(B, device=actions_taken.device)
+        t_int   = self._t_to_int(t_batch)
+        v_new   = self.flow_net(fixed_x1, t_int, global_cond)
+        mu_new  = fixed_x1 - v_new
+
+        sq_new = (actions_taken - mu_new).pow(2).sum(dim=[1, 2])
+        sq_old = (actions_taken - mu_old).pow(2).sum(dim=[1, 2])
+        log_ratio = (-0.5 / sigma2 * (sq_new - sq_old)).clamp(-20.0, 20.0)
+        ratio     = torch.exp(log_ratio)
+
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1.0 - clip_epsilon, 1.0 + clip_epsilon) * advantages
+        loss  = -torch.min(surr1, surr2).mean()
+
+        with torch.no_grad():
+            clip_fraction = ((ratio - 1.0).abs() > clip_epsilon).float().mean().item()
+            approx_kl     = 0.5 * log_ratio.pow(2).mean().item()
+            mean_ratio    = ratio.mean().item()
+            log_ratio_std = log_ratio.std().item()
+
+        return loss, clip_fraction, approx_kl, mean_ratio, log_ratio_std
+
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
@@ -221,14 +281,16 @@ class FlowMatchingPolicyV4(nn.Module):
         imu: torch.Tensor,
         n_steps: Optional[int] = None,
         _fixed_x1: Optional[torch.Tensor] = None,
+        temperature: float = 1.0,
     ) -> torch.Tensor:
         """
         Sample action sequence via Euler integration.
 
         Args:
-            images:  (B, T_obs*3, H, W)
-            imu:     (B, 6)
-            n_steps: override n_inference_steps if provided
+            images:      (B, T_obs*3, H, W)
+            imu:         (B, 6)
+            n_steps:     override n_inference_steps if provided
+            temperature: scale initial noise x1 ~ N(0, σ²I); σ<1 reduces variance
 
         Returns:
             actions: (B, action_dim, T_pred)
@@ -240,7 +302,7 @@ class FlowMatchingPolicyV4(nn.Module):
         global_cond = self._encode(images, imu)
 
         x = _fixed_x1 if _fixed_x1 is not None else \
-            torch.randn(B, self.action_dim, self.T_pred, device=device)
+            torch.randn(B, self.action_dim, self.T_pred, device=device) * temperature
 
         dt = 1.0 / n
         for i in range(n):

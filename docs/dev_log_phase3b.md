@@ -2813,3 +2813,70 @@ echo "u450 eval PID: $!"`
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-05-07 03:21:53 bash -->
+### [Auto-Log] 2026-05-07 03:21:53 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260506_121228/best_reinflow_model.pt \
+    --output-dir evaluation_results/run21_unshackled/best/ \
+    --n-episodes 50 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-07 03:26:59 bash -->
+### [Auto-Log] 2026-05-07 03:26:59 — RHC Evaluation
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260506_121228/final_reinflow_model.pt \
+    --output-dir evaluation_results/run21_unshackled/final/ \
+    --n-episodes 50 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-12 03:55:49 bash -->
+### [Auto-Log] 2026-05-12 03:55:49 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/flow_policy_v4/20260511_110507/best_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-12 03:57:45 bash -->
+### [Auto-Log] 2026-05-12 03:57:45 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/flow_policy_v4/20260511_110507/best_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-12 16:38:55 bash -->
+### [Auto-Log] 2026-05-12 16:38:55 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && dppo/Scripts/python.exe -u -m scripts.evaluate_rhc_v4 --flow-model checkpoints/flow_policy_v4/20260512_055304/best_model.pt --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt --ppo-norm checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz 2>&1`
+
+**Output:**
+```
+(empty)
+```

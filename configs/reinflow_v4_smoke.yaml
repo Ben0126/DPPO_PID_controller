@@ -1,0 +1,30 @@
+rl:
+  loss_type: clipped
+  sde_noise_std: 0.1
+  clip_epsilon: 0.2
+  learning_rate: 1.0e-5
+  value_lr: 1.0e-3
+  value_hidden_dim: 256
+  n_rollout_steps: 256
+  n_epochs: 2
+  mini_batch: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  advantage_beta: 0.1
+  grad_clip: 1.0
+  value_warmup_updates: 0
+  vloss_gate: 1000.0
+  vloss_best_threshold: 1000.0
+  save_freq_ckpt: 10
+  total_updates: 5
+  lambda_bc: 0.0
+  demo_path: data/expert_demos_v4.h5
+  demo_episodes: 10
+
+curriculum:
+  enabled: false
+
+logging:
+  tensorboard_log: "./logs/reinflow_v4_smoke/"
+  save_path: "./checkpoints/reinflow_v4_smoke/"
+  save_freq: 50

@@ -1571,3 +1571,976 @@ def copy_episode(src_grp: h5py.Group, dst_grp: h5py.Group):
         if ds.compression is not None:
 ... [truncated — 3772 chars total]
 ```
+
+---
+<!-- auto-log 2026-05-05 17:42:11 edit -->
+### [Auto-Log] 2026-05-05 17:42:11 — Script Fix
+
+**File:** `scripts\evaluate_pid_baseline.py`
+
+**Before:**
+```python
+print(f"  Compute time:   {mean_ct_us:.1f} 繕s/step")
+```
+
+**After:**
+```python
+print(f"  Compute time:   {mean_ct_us:.1f} us/step")
+```
+
+---
+<!-- auto-log 2026-05-05 17:42:17 edit -->
+### [Auto-Log] 2026-05-05 17:42:17 — Script Fix
+
+**File:** `scripts\evaluate_pid_baseline.py`
+
+**Before:**
+```python
+parser.add_argument('--Kp-rate',      type=float, default=0.05)
+    parser.add_argument('--vel-max',      type=float, default=2.0)
+```
+
+**After:**
+```python
+parser.add_argument('--Kp-rate',      type=float, default=0.15)
+    parser.add_argument('--vel-max',      type=float, default=2.0)
+```
+
+---
+<!-- auto-log 2026-05-05 17:42:21 edit -->
+### [Auto-Log] 2026-05-05 17:42:21 — Script Fix
+
+**File:** `scripts\evaluate_pid_baseline.py`
+
+**Before:**
+```python
+parser.add_argument('--omega-max',    type=float, default=3.0)
+```
+
+**After:**
+```python
+parser.add_argument('--omega-max',    type=float, default=2.0)
+```
+
+---
+<!-- auto-log 2026-05-06 06:23:33 edit -->
+### [Auto-Log] 2026-05-06 06:23:33 — Script Fix
+
+**File:** `scripts\evaluate_pid_baseline.py`
+
+**Before:**
+```python
+env = QuadrotorEnv(config_path=args.config)
+    env.reset(seed=args.seed)  # seed the RNG once so episodes are reproducible
+```
+
+**After:**
+```python
+env = QuadrotorEnv(config_path=args.config)
+    if args.target_type:
+        env.target_type = args.target_type          # override without re-reading YAML
+    if args.waypoint_range is not None:
+        env.waypoint_range = args.waypoint_range
+    print(f"  Target mode: {env.target_type}  waypoint_range={env.waypoint_range:.1f}m")
+    env.reset(seed=args.seed)  # seed the RNG once so episodes are reproducible
+```
+
+---
+<!-- auto-log 2026-05-06 06:23:47 edit -->
+### [Auto-Log] 2026-05-06 06:23:47 — Script Fix
+
+**File:** `scripts\evaluate_pid_baseline.py`
+
+**Before:**
+```python
+# Environment
+    parser.add_argument('--config',   type=str, default='configs/quadrotor.yaml',
+                        help='Path to quadrotor.yaml')
+    parser.add_argument('--episodes', type=int, default=50)
+    parser.add_argument('--seed',     type=int, default=42)
+    parser.add_argument('--output',   type=str,
+                        default='evaluation_results/pid_baseline/results.json')
+```
+
+**After:**
+```python
+# Environment
+    parser.add_argument('--config',        type=str, default='configs/quadrotor.yaml')
+    parser.add_argument('--target-type',   type=str, default=None,
+                        choices=['hover', 'waypoint'],
+                        help='Override target_type from config (hover|waypoint)')
+    parser.add_argument('--waypoint-range',type=float, default=None,
+                        help='Override waypoint_range (e.g. 2.0m for ReinFlow comparison)')
+    parser.add_argument('--episodes', type=int, default=50)
+    parser.add_argument('--seed',     type=int, default=42)
+    parser.add_argument('--output',   type=str,
+                        default='evaluation_results/pid_baseline/results.json')
+```
+
+---
+<!-- auto-log 2026-05-06 06:43:05 write -->
+### [Auto-Log] 2026-05-06 06:43:05 — New File: Script Fix
+
+**File:** `scripts\evaluate_temperature_scaling.py`
+
+**Content:**
+```python
+"""
+Temperature Scaling Test for ReinFlow v4.0
+
+Tests whether reducing the initial noise variance (x1 ~ N(0, sigma^2 I) with sigma < 1)
+reduces the crash rate of ReinFlow-finetuned FlowMatchingPolicyV4.
+
+Hypothesis: the primary cause of 50/50 crashes is stochastic sampling noise accumulation
+in body rate, not the policy weights themselves. If reducing sigma improves survival rate,
+this confirms the hypothesis.
+
+Usage:
+    python -m scripts.evaluate_temperature_scaling \
+        --flow-model checkpoints/reinflow_v4/reinflow_v4_20260502_162154/best_reinflow_model.pt
+
+    # Single temperature (quick check):
+    python -m scripts.evaluate_temperature_scaling \
+        --flow-model checkpoints/reinflow_v4/reinflow_v4_20260502_162154/best_reinflow_model.pt \
+        --temperatures 0.5 --episodes
+... [truncated — 10112 chars total]
+```
+
+---
+<!-- auto-log 2026-05-06 12:00:53 edit -->
+### [Auto-Log] 2026-05-06 12:00:53 — Env Fix
+
+**File:** `envs\quadrotor_dynamics.py`
+
+**Before:**
+```python
+def reset(self, position: np.ndarray = None, velocity: np.ndarray = None):
+        """Reset to initial state (hovering at origin or given position)."""
+        self.position = position if position is not None else np.zeros(3)
+        self.quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # upright
+        self.velocity = velocity if velocity is not None else np.zeros(3)
+        self.ang_velocity = np.zeros(3)
+        self.motor_thrust = np.zeros(4)
+        self._last_force_world = np.zeros(3)
+        self._last_R = np.eye(3)
+```
+
+**After:**
+```python
+def reset(self, position: np.ndarray = None, velocity: np.ndarray = None,
+              quaternion: np.ndarray = None):
+        """Reset to initial state (hovering at origin or given position).
+
+        Args:
+            position:   (3,) world NED. Default: origin.
+            velocity:   (3,) world NED. Default: zero.
+            quaternion: (4,) [qw, qx, qy, qz]. Default: identity (upright).
+                        Used by Swift-style perturbed init to start from a
+                        tilted attitude, forcing recovery learning.
+        """
+        self.position = position if position is not None else np.zeros(3)
+        self.quaternion = (quaternion_normalize(quaternion) if quaternion is not None
+                           else np.array([1.0, 0.0, 0.0, 0.0]))
+        self.velocity = 
+... [truncated — 1044 chars total]
+```
+
+---
+<!-- auto-log 2026-05-06 12:02:06 edit -->
+### [Auto-Log] 2026-05-06 12:02:06 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+cur_pos_end  = cur_cfg.get('pos_end',   cur_pos_start)
+    cur_vel_end  = cur_cfg.get('vel_end',   cur_vel_start)
+    cur_anchor_prob = cur_cfg.get('hover_anchor_prob', 0.0)
+```
+
+**After:**
+```python
+cur_pos_end  = cur_cfg.get('pos_end',   cur_pos_start)
+    cur_vel_end  = cur_cfg.get('vel_end',   cur_vel_start)
+    cur_anchor_prob = cur_cfg.get('hover_anchor_prob', 0.0)
+    cur_swift_prob  = cur_cfg.get('swift_perturbation_prob', 0.0)
+    cur_swift_tilt  = cur_cfg.get('swift_perturb_tilt_deg', 30.0)
+    cur_swift_vel   = cur_cfg.get('swift_perturb_vel',      1.0)
+```
+
+---
+<!-- auto-log 2026-05-06 12:02:28 edit -->
+### [Auto-Log] 2026-05-06 12:02:28 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+# ---- Curriculum: update env params ----
+        if curriculum_enabled and vloss_gate_passed:
+            if updates_since_gate <= cur_n_hover:
+                # Stage 1: hover stabilisation (no anchor needed yet)
+                cur_pos = cur_pos_start
+                cur_vel = cur_vel_start
+                base_env.hover_anchor_prob = 0.0
+            elif updates_since_gate <= cur_n_hover + cur_n_ramp:
+                # Stage 2: linear ramp + anchor (prevents catastrophic forgetting)
+                t = (updates_since_gate - cur_n_hover) / cur_n_ramp
+                cur_pos = cur_pos_start + t * (cur_pos_end - cur_pos_start)
+                cur_vel = cur_vel_start + t * (cur_vel_end - cur_vel_start)
+                base_env.hover_anchor_prob = cur_anchor_prob
+            else:
+         
+... [truncated — 1070 chars total]
+```
+
+**After:**
+```python
+# ---- Curriculum: update env params ----
+        if curriculum_enabled and vloss_gate_passed:
+            if updates_since_gate <= cur_n_hover:
+                # Stage 1: hover stabilisation (no anchor / no swift)
+                cur_pos = cur_pos_start
+                cur_vel = cur_vel_start
+                base_env.hover_anchor_prob       = 0.0
+                base_env.swift_perturbation_prob = 0.0
+            elif updates_since_gate <= cur_n_hover + cur_n_ramp:
+                # Stage 2: linear ramp + anchor + swift perturbed init
+                t = (updates_since_gate - cur_n_hover) / cur_n_ramp
+                cur_pos = cur_pos_start + t * (cur_pos_end - cur_pos_start)
+                cur_vel = cur_vel_start + t * (cur_vel_end - cur_vel_start)
+                base_env.hover_anchor_p
+... [truncated — 1271 chars total]
+```
+
+---
+<!-- auto-log 2026-05-06 12:02:38 edit -->
+### [Auto-Log] 2026-05-06 12:02:38 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+if curriculum_enabled:
+            writer.add_scalar('curriculum/pos_range', base_env.initial_pos_range, update)
+            writer.add_scalar('curriculum/vel_range', base_env.initial_vel_range, update)
+            writer.add_scalar('curriculum/anchor_prob', getattr(base_env, 'hover_anchor_prob', 0.0), update)
+```
+
+**After:**
+```python
+if curriculum_enabled:
+            writer.add_scalar('curriculum/pos_range', base_env.initial_pos_range, update)
+            writer.add_scalar('curriculum/vel_range', base_env.initial_vel_range, update)
+            writer.add_scalar('curriculum/anchor_prob', getattr(base_env, 'hover_anchor_prob', 0.0), update)
+            writer.add_scalar('curriculum/swift_prob',  getattr(base_env, 'swift_perturbation_prob', 0.0), update)
+```
+
+---
+<!-- auto-log 2026-05-06 12:08:26 edit -->
+### [Auto-Log] 2026-05-06 12:08:26 — Env Fix
+
+**File:** `envs\quadrotor_env_v4.py`
+
+**Before:**
+```python
+self.current_step              = 0
+        self.target_position           = np.zeros(3)
+        self.time_since_target_change  = 0.0
+        self.render_mode               = render_mode
+```
+
+**After:**
+```python
+self.current_step              = 0
+        self.target_position           = np.zeros(3)
+        self.time_since_target_change  = 0.0
+        self.render_mode               = render_mode
+
+        # Per-episode termination tilt (Run 21: relaxed during swift episodes
+        # so that drones starting at 30簞 tilt have room to recover before
+        # the 60簞 standard cutoff terminates them prematurely).
+        self._current_max_tilt_deg = self.max_tilt_deg
+```
+
+---
+<!-- auto-log 2026-05-06 12:08:37 edit -->
+### [Auto-Log] 2026-05-06 12:08:37 — Env Fix
+
+**File:** `envs\quadrotor_env_v4.py`
+
+**Before:**
+```python
+init_tilt_deg = 0.0
+        if r < anchor_prob:
+            pos_range_now = 0.1
+            vel_range_now = 0.05
+        elif r < anchor_prob + swift_prob:
+            # Swift-style perturbed init: drone starts tilted with non-zero
+            # velocity, forcing the policy to learn extreme recovery rather
+            # than only seeing easy from-rest trajectories.
+            pos_range_now = self.initial_pos_range
+            vel_range_now = getattr(self, 'swift_perturb_vel',      1.0)
+            tilt_max      = getattr(self, 'swift_perturb_tilt_deg', 30.0)
+            init_tilt_deg = self.np_random.uniform(0.0, tilt_max)
+        else:
+            pos_range_now = self.initial_pos_range
+            vel_range_now = self.initial_vel_range
+```
+
+**After:**
+```python
+init_tilt_deg = 0.0
+        if r < anchor_prob:
+            pos_range_now = 0.1
+            vel_range_now = 0.05
+            self._current_max_tilt_deg = self.max_tilt_deg
+        elif r < anchor_prob + swift_prob:
+            # Swift-style perturbed init: drone starts tilted with non-zero
+            # velocity, forcing the policy to learn extreme recovery rather
+            # than only seeing easy from-rest trajectories. Termination tilt
+            # widened to swift_max_tilt_deg (default 80簞) so policy has room
+            # to recover before crash trigger fires.
+            pos_range_now = self.initial_pos_range
+            vel_range_now = getattr(self, 'swift_perturb_vel',      1.0)
+            tilt_max      = getattr(self, 'swift_perturb_tilt_deg', 30.0)
+            init_tilt_deg = 
+... [truncated — 1095 chars total]
+```
+
+---
+<!-- auto-log 2026-05-06 12:08:58 edit -->
+### [Auto-Log] 2026-05-06 12:08:58 — Config / HP Change
+
+**File:** `configs\reinflow_v4.yaml`
+
+**Before:**
+```yaml
+swift_perturbation_prob: 0.2
+  swift_perturb_tilt_deg: 30.0   # max initial tilt off-vertical [deg]
+  swift_perturb_vel: 1.0         # max initial velocity per axis [m/s]
+```
+
+**After:**
+```yaml
+swift_perturbation_prob: 0.2
+  swift_perturb_tilt_deg: 30.0   # max initial tilt off-vertical [deg]
+  swift_perturb_vel: 1.0         # max initial velocity per axis [m/s]
+  swift_max_tilt_deg: 80.0       # termination tilt for swift episodes (vs 60簞 standard)
+                                 # Gives 50簞 recovery margin for a 30簞 initial tilt before crash trigger
+```
+
+---
+<!-- auto-log 2026-05-06 12:09:03 edit -->
+### [Auto-Log] 2026-05-06 12:09:03 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+cur_swift_prob  = cur_cfg.get('swift_perturbation_prob', 0.0)
+    cur_swift_tilt  = cur_cfg.get('swift_perturb_tilt_deg', 30.0)
+    cur_swift_vel   = cur_cfg.get('swift_perturb_vel',      1.0)
+```
+
+**After:**
+```python
+cur_swift_prob  = cur_cfg.get('swift_perturbation_prob', 0.0)
+    cur_swift_tilt  = cur_cfg.get('swift_perturb_tilt_deg', 30.0)
+    cur_swift_vel   = cur_cfg.get('swift_perturb_vel',      1.0)
+    cur_swift_term  = cur_cfg.get('swift_max_tilt_deg',     80.0)
+```
+
+---
+<!-- auto-log 2026-05-09 05:04:40 edit -->
+### [Auto-Log] 2026-05-09 05:04:40 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+def collect_rollout(env: QuadrotorVisualEnv,
+                    base_env: QuadrotorEnvV4,
+                    policy: FlowMatchingPolicyV4,
+                    value_net: ValueNetworkV4,
+                    n_steps: int, T_obs: int, T_action: int,
+                    device: torch.device) -> Dict:
+```
+
+**After:**
+```python
+def collect_rollout(env: QuadrotorVisualEnv,
+                    base_env: QuadrotorEnvV4,
+                    policy: FlowMatchingPolicyV4,
+                    value_net: ValueNetworkV4,
+                    n_steps: int, T_obs: int, T_action: int,
+                    device: torch.device,
+                    sde_noise_std: float = 0.0) -> Dict:
+```
+
+---
+<!-- auto-log 2026-05-09 05:05:06 edit -->
+### [Auto-Log] 2026-05-09 05:05:06 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+rollout['image_stacks'].append(img_stack.copy())
+            rollout['action_seqs'].append(action_seq_np.copy())  # (action_dim, T_pred)
+            rollout['noise_seqs'].append(noise_np.copy())        # (action_dim, T_pred)
+            rollout['imu_data'].append(imu_vec.copy())
+```
+
+**After:**
+```python
+rollout['image_stacks'].append(img_stack.copy())
+            rollout['action_seqs'].append(action_seq_np.copy())  # (action_dim, T_pred)
+            rollout['noise_seqs'].append(noise_np.copy())        # (action_dim, T_pred)
+            rollout['mu_old'].append(mu_old_np.copy())           # (action_dim, T_pred)
+            rollout['imu_data'].append(imu_vec.copy())
+```
+
+---
+<!-- auto-log 2026-05-09 05:05:17 edit -->
+### [Auto-Log] 2026-05-09 05:05:17 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+beta                 = rl_cfg['advantage_beta']
+    gamma                = rl_cfg['gamma']
+    gae_lambda           = rl_cfg['gae_lambda']
+    n_rollout            = rl_cfg['n_rollout_steps']
+    n_epochs             = rl_cfg['n_epochs']
+    mini_batch           = rl_cfg['mini_batch']
+    grad_clip            = rl_cfg['grad_clip']
+    value_warmup         = rl_cfg['value_warmup_updates']
+    vloss_thresh         = rl_cfg['vloss_best_threshold']
+    vloss_gate           = rl_cfg.get('vloss_gate', 10.0)
+    lambda_bc            = rl_cfg.get('lambda_bc', 0.0)
+    total_updates        = rl_cfg['total_updates']
+```
+
+**After:**
+```python
+beta                 = rl_cfg['advantage_beta']
+    gamma                = rl_cfg['gamma']
+    gae_lambda           = rl_cfg['gae_lambda']
+    n_rollout            = rl_cfg['n_rollout_steps']
+    n_epochs             = rl_cfg['n_epochs']
+    mini_batch           = rl_cfg['mini_batch']
+    grad_clip            = rl_cfg['grad_clip']
+    value_warmup         = rl_cfg['value_warmup_updates']
+    vloss_thresh         = rl_cfg['vloss_best_threshold']
+    vloss_gate           = rl_cfg.get('vloss_gate', 10.0)
+    lambda_bc            = rl_cfg.get('lambda_bc', 0.0)
+    total_updates        = rl_cfg['total_updates']
+    loss_type            = rl_cfg.get('loss_type', 'weighted')
+    sde_noise_std        = rl_cfg.get('sde_noise_std', 0.0)
+    clip_epsilon         = rl_cfg.get('clip_epsilon', 0.2)
+```
+
+---
+<!-- auto-log 2026-05-09 05:05:23 edit -->
+### [Auto-Log] 2026-05-09 05:05:23 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+rollout = collect_rollout(
+            visual_env, base_env, policy, value_net,
+            n_steps=n_rollout,
+            T_obs=vis_cfg['T_obs'],
+            T_action=act_cfg['T_action'],
+            device=device,
+        )
+```
+
+**After:**
+```python
+rollout = collect_rollout(
+            visual_env, base_env, policy, value_net,
+            n_steps=n_rollout,
+            T_obs=vis_cfg['T_obs'],
+            T_action=act_cfg['T_action'],
+            device=device,
+            sde_noise_std=sde_noise_std,
+        )
+```
+
+---
+<!-- auto-log 2026-05-09 05:05:44 edit -->
+### [Auto-Log] 2026-05-09 05:05:44 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+# ---- Policy update (skip during warmup) ----
+        policy_loss_t = torch.tensor(0.0)
+        frac_pos = (advantages > 0).mean()
+        if not in_warmup:
+            policy.train()
+            demo_perm = torch.randperm(N_demo) if N_demo > 0 else None
+            demo_ptr  = 0
+            for _ in range(n_epochs):
+                idx = torch.randperm(N)
+                for start in range(0, N, mini_batch):
+                    mb = idx[start:start + mini_batch]
+                    imgs_gpu = img_cpu[mb].to(device=device, dtype=torch.float32) / 255.0
+                    act_gpu  = act_cpu[mb].to(device)
+                    imu_gpu  = imu_cpu[mb].to(device)
+                    adv_gpu  = adv_t[mb].to(device)
+
+                    rl_loss = policy.compute_weighted_loss(
+                    
+... [truncated — 918 chars total]
+```
+
+**After:**
+```python
+# ---- Policy update (skip during warmup) ----
+        policy_loss_t = torch.tensor(0.0)
+        frac_pos = (advantages > 0).mean()
+        epoch_clip_fracs, epoch_approx_kls, epoch_mean_ratios, epoch_lr_stds = [], [], [], []
+        if not in_warmup:
+            policy.train()
+            demo_perm = torch.randperm(N_demo) if N_demo > 0 else None
+            demo_ptr  = 0
+            for _ in range(n_epochs):
+                idx = torch.randperm(N)
+                for start in range(0, N, mini_batch):
+                    mb = idx[start:start + mini_batch]
+                    imgs_gpu = img_cpu[mb].to(device=device, dtype=torch.float32) / 255.0
+                    act_gpu  = act_cpu[mb].to(device)
+                    imu_gpu  = imu_cpu[mb].to(device)
+                    adv_gpu  = adv_t[mb
+... [truncated — 1722 chars total]
+```
+
+---
+<!-- auto-log 2026-05-09 05:05:53 edit -->
+### [Auto-Log] 2026-05-09 05:05:53 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+# ---- Logging ----
+        mean_reward = np.mean(rollout['rewards'])
+        writer.add_scalar('reinflow/mean_reward',  mean_reward,          update)
+        writer.add_scalar('reinflow/policy_loss',  policy_loss_t.item(), update)
+        writer.add_scalar('reinflow/value_loss',   value_loss_t.item(),  update)
+        writer.add_scalar('reinflow/frac_pos_adv', float(frac_pos),      update)
+        writer.add_scalar('reinflow/warmup',       int(in_warmup),       update)
+```
+
+**After:**
+```python
+# ---- Logging ----
+        mean_reward = np.mean(rollout['rewards'])
+        writer.add_scalar('reinflow/mean_reward',  mean_reward,          update)
+        writer.add_scalar('reinflow/policy_loss',  policy_loss_t.item(), update)
+        writer.add_scalar('reinflow/value_loss',   value_loss_t.item(),  update)
+        writer.add_scalar('reinflow/frac_pos_adv', float(frac_pos),      update)
+        writer.add_scalar('reinflow/warmup',       int(in_warmup),       update)
+        if loss_type == 'clipped' and epoch_clip_fracs:
+            writer.add_scalar('ppo/clip_fraction', np.mean(epoch_clip_fracs), update)
+            writer.add_scalar('ppo/approx_kl',     np.mean(epoch_approx_kls), update)
+            writer.add_scalar('ppo/mean_ratio',    np.mean(epoch_mean_ratios), update)
+          
+... [truncated — 1015 chars total]
+```
+
+---
+<!-- auto-log 2026-05-09 05:07:45 write -->
+### [Auto-Log] 2026-05-09 05:07:45 — New File: Config / HP Change
+
+**File:** `configs\reinflow_v4_smoke.yaml`
+
+**Content:**
+```yaml
+rl:
+  loss_type: clipped
+  sde_noise_std: 0.1
+  clip_epsilon: 0.2
+  learning_rate: 1.0e-5
+  value_lr: 1.0e-3
+  value_hidden_dim: 256
+  n_rollout_steps: 256
+  n_epochs: 2
+  mini_batch: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  advantage_beta: 0.1
+  grad_clip: 1.0
+  value_warmup_updates: 0
+  vloss_gate: 1000.0
+  vloss_best_threshold: 1000.0
+  save_freq_ckpt: 10
+  total_updates: 5
+  lambda_bc: 0.0
+  demo_path: data/expert_demos_v4.h5
+  demo_episodes: 10
+
+curriculum:
+  enabled: false
+
+logging:
+  tensorboard_log: "./logs/reinflow_v4_smoke/"
+  save_path: "./checkpoints/reinflow_v4_smoke/"
+  save_freq: 50
+```
+
+---
+<!-- auto-log 2026-05-09 08:32:22 edit -->
+### [Auto-Log] 2026-05-09 08:32:22 — Config / HP Change
+
+**File:** `configs\reinflow_v4.yaml`
+
+**Before:**
+```yaml
+vloss_gate: 10.0
+```
+
+**After:**
+```yaml
+vloss_gate: 50.0              # was 10.0: no-curriculum env has higher VLoss variance
+```
+
+---
+<!-- auto-log 2026-05-09 16:55:38 edit -->
+### [Auto-Log] 2026-05-09 16:55:38 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Phase 3a v4.0: Flow Matching supervised pre-training')
+    parser.add_argument('--config', type=str, default='configs/flow_policy_v4.yaml')
+    parser.add_argument('--quick', action='store_true', help='5-epoch smoke test')
+    args = parser.parse_args()
+    train(args)
+```
+
+**After:**
+```python
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Phase 3a v4.0: Flow Matching supervised pre-training')
+    parser.add_argument('--config', type=str, default='configs/flow_policy_v4.yaml')
+    parser.add_argument('--quick', action='store_true', help='5-epoch smoke test')
+    parser.add_argument('--recovery-h5', type=str, default=None,
+                        help='Path to recovery demo h5 to mix in (DAgger Step 1 output)')
+    parser.add_argument('--recovery-episodes', type=int, default=0,
+                        help='Max recovery episodes to use (0 = all)')
+    args = parser.parse_args()
+    train(args)
+```
+
+---
+<!-- auto-log 2026-05-11 10:29:59 edit -->
+### [Auto-Log] 2026-05-11 10:29:59 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+max_ep = train_cfg.get('_max_episodes', n_ep)
+    all_ep = list(range(min(n_ep, max_ep)))
+```
+
+**After:**
+```python
+max_ep = args.hover_episodes if args.hover_episodes > 0 else train_cfg.get('_max_episodes', n_ep)
+    all_ep = list(range(min(n_ep, max_ep)))
+```
+
+---
+<!-- auto-log 2026-05-11 10:30:06 edit -->
+### [Auto-Log] 2026-05-11 10:30:06 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+parser.add_argument('--recovery-episodes', type=int, default=0,
+                        help='Max recovery episodes to use (0 = all)')
+    args = parser.parse_args()
+```
+
+**After:**
+```python
+parser.add_argument('--recovery-episodes', type=int, default=0,
+                        help='Max recovery episodes to use (0 = all)')
+    parser.add_argument('--hover-episodes', type=int, default=0,
+                        help='Max hover episodes to use (0 = all); use to cap RAM when mixing in recovery data')
+    args = parser.parse_args()
+```
+
+---
+<!-- auto-log 2026-05-11 10:56:53 edit -->
+### [Auto-Log] 2026-05-11 10:56:53 — Config / HP Change
+
+**File:** `configs\flow_policy_v4.yaml`
+
+**Before:**
+```yaml
+batch_size: 512                 # RTX 3090 24GB can handle 512 at this scale
+```
+
+**After:**
+```yaml
+batch_size: 256                 # lowered from 512: mixed recovery dataset causes CUDA OOM at 512
+```
+
+---
+<!-- auto-log 2026-05-12 05:28:19 edit -->
+### [Auto-Log] 2026-05-12 05:28:19 — Model Fix
+
+**File:** `models\flow_policy_v4.py`
+
+**Before:**
+```python
+def __init__(
+        self,
+        vision_feature_dim: int = 256,
+        imu_feature_dim: int = 32,
+```
+
+**After:**
+```python
+def __init__(
+        self,
+        vision_feature_dim: int = 256,
+        imu_feature_dim: int = 128,
+```
+
+---
+<!-- auto-log 2026-05-12 05:28:25 edit -->
+### [Auto-Log] 2026-05-12 05:28:25 — Model Fix
+
+**File:** `models\flow_policy_v4.py`
+
+**Before:**
+```python
+global_cond_dim = vision_feature_dim + imu_feature_dim  # 288
+
+        self.vision_encoder = VisionEncoder(
+            in_channels=T_obs * 3,
+            feature_dim=vision_feature_dim,
+        )
+
+        self.imu_encoder = nn.Sequential(
+            nn.Linear(6, 64),
+            nn.Mish(),
+            nn.Linear(64, imu_feature_dim),
+        )
+
+        self.flow_net = ConditionalUnet1d(
+```
+
+**After:**
+```python
+global_cond_dim = vision_feature_dim + imu_feature_dim  # 384
+
+        self.vision_encoder = VisionEncoder(
+            in_channels=T_obs * 3,
+            feature_dim=vision_feature_dim,
+        )
+
+        self.imu_encoder = nn.Sequential(
+            nn.Linear(6, 256),
+            nn.ReLU(),
+            nn.Linear(256, imu_feature_dim),  # imu_feature_dim=128
+            nn.ReLU(),
+        )
+
+        self.tilt_head = nn.Linear(imu_feature_dim, 1)
+
+        self.flow_net = ConditionalUnet1d(
+```
+
+---
+<!-- auto-log 2026-05-12 05:28:30 edit -->
+### [Auto-Log] 2026-05-12 05:28:30 — Model Fix
+
+**File:** `models\flow_policy_v4.py`
+
+**Before:**
+```python
+vis_feat = self.vision_encoder(images)      # (B, 256)
+        imu_feat = self.imu_encoder(imu)             # (B, 32)
+        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 288)
+```
+
+**After:**
+```python
+vis_feat = self.vision_encoder(images)      # (B, 256)
+        imu_feat = self.imu_encoder(imu)             # (B, 128)
+        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
+```
+
+---
+<!-- auto-log 2026-05-12 05:29:04 edit -->
+### [Auto-Log] 2026-05-12 05:29:04 — Config / HP Change
+
+**File:** `configs\flow_policy_v4.yaml`
+
+**Before:**
+```yaml
+grad_clip: 1.0
+  dataset_path: "data/expert_demos_v4.h5"
+```
+
+**After:**
+```yaml
+grad_clip: 1.0
+  lambda_tilt: 0.1                # auxiliary tilt supervision weight (Hypothesis 3a)
+  dataset_path: "data/expert_demos_v4.h5"
+```
+
+---
+<!-- auto-log 2026-05-12 05:29:27 edit -->
+### [Auto-Log] 2026-05-12 05:29:27 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+def __init__(self, sources: list,
+                 T_obs: int = 2, T_pred: int = 8):
+        """
+        Args:
+            sources: list of (h5_path, episode_indices) tuples.
+                     Pass a single-element list for the standard single-file case.
+        """
+        self.T_obs  = T_obs
+        self.T_pred = T_pred
+
+        self._img_buf  = []
+        self._imu_buf  = []
+        self._act_buf  = []
+
+        for h5_path, episode_indices in sources:
+            print(f"  Loading {len(episode_indices)} episodes from {h5_path} ...")
+            with h5py.File(h5_path, 'r') as f:
+                for ep_idx in episode_indices:
+                    key = f'episode_{ep_idx}'
+                    if key not in f:
+                        continue
+                    imgs = f[key]['images'][:
+... [truncated — 1585 chars total]
+```
+
+**After:**
+```python
+def __init__(self, sources: list,
+                 T_obs: int = 2, T_pred: int = 8):
+        """
+        Args:
+            sources: list of (h5_path, episode_indices) tuples.
+                     Pass a single-element list for the standard single-file case.
+        """
+        self.T_obs  = T_obs
+        self.T_pred = T_pred
+
+        self._img_buf  = []
+        self._imu_buf  = []
+        self._act_buf  = []
+        _tilt_buf      = []
+
+        for h5_path, episode_indices in sources:
+            print(f"  Loading {len(episode_indices)} episodes from {h5_path} ...")
+            with h5py.File(h5_path, 'r') as f:
+                for ep_idx in episode_indices:
+                    key = f'episode_{ep_idx}'
+                    if key not in f:
+                        continue
+                 
+... [truncated — 2191 chars total]
+```
+
+---
+<!-- auto-log 2026-05-12 05:29:32 edit -->
+### [Auto-Log] 2026-05-12 05:29:32 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+def __getitem__(self, idx):
+        return (
+            torch.from_numpy(self._img_arr[idx]),
+            torch.from_numpy(self._imu_arr[idx]),
+            torch.from_numpy(self._act_arr[idx]),
+        )
+```
+
+**After:**
+```python
+def __getitem__(self, idx):
+        return (
+            torch.from_numpy(self._img_arr[idx]),
+            torch.from_numpy(self._imu_arr[idx]),
+            torch.from_numpy(self._act_arr[idx]),
+            torch.tensor(self._tilt_arr[idx]),
+        )
+```
+
+---
+<!-- auto-log 2026-05-12 05:29:37 edit -->
+### [Auto-Log] 2026-05-12 05:29:37 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+best_val_loss = float('inf')
+    global_step   = 0
+    scaler = GradScaler('cuda')
+```
+
+**After:**
+```python
+lambda_tilt = train_cfg.get('lambda_tilt', 0.1)
+    best_val_loss = float('inf')
+    global_step   = 0
+    scaler = GradScaler('cuda')
+```
+
+---
+<!-- auto-log 2026-05-12 05:29:52 edit -->
+### [Auto-Log] 2026-05-12 05:29:52 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for images, imu, actions in val_loader:
+                images  = images.to(device=device, dtype=torch.float32, non_blocking=True) / 255.0
+                imu     = imu.to(device, non_blocking=True)
+                actions = actions.to(device, non_blocking=True)
+                with autocast('cuda'):
+                    val_loss += model.compute_loss(images, imu, actions).item()
+```
+
+**After:**
+```python
+model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for images, imu, actions, _ in val_loader:
+                images  = images.to(device=device, dtype=torch.float32, non_blocking=True) / 255.0
+                imu     = imu.to(device, non_blocking=True)
+                actions = actions.to(device, non_blocking=True)
+                with autocast('cuda'):
+                    # val loss = pure flow matching only (comparable across runs)
+                    val_loss += model.compute_loss(images, imu, actions).item()
+```

@@ -60,3 +60,7 @@ dppo_status.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code 個人設定
+CLAUDE.local.md
+.claude/settings.local.json

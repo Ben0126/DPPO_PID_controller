@@ -1119,3 +1119,11 @@ Run 20 (early ramp)   ★★★               ★ (ramp 1.5m)      pending      
 | n_hover=400 over-trains hover (peak at u100) | Run 19 | n_hover=400→100 | Run 20 |
 | action penalty not hover-referenced (hypothesis) | Run 17 | REFUTED — code already correct | — |
 | sigma_pos=0.10 reward cliff | Run 18 | sigma_pos=0.10→0.30 | Run 18 |
+
+---
+
+## 後續實驗（Run 21 起）
+
+Run-20 後的所有實驗（溫度縮放消融、PID baseline、Run 21/22、Hypothesis 1/2/3）記錄在：
+
+**[docs/dev_log_v4_post20.md](dev_log_v4_post20.md)**

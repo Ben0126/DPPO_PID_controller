@@ -1,0 +1,55 @@
+# Model weights & checkpoints
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.engine
+*.onnx
+/checkpoints/
+/saved_models/
+
+# Datasets
+/datasets/
+/data/*.h5
+/data/*.hdf5
+*.h5
+*.hdf5
+*.npz
+
+# WandB & Logs
+/wandb/
+/logs/
+/outputs/
+/runs/
+*.log
+*.jsonl
+
+# Isaac Gym / Sim assets
+/assets/
+*.urdf
+*.mjcf
+
+# Videos & Images
+*.mp4
+*.avi
+*.gif
+*.png
+*.jpg
+/videos/
+/renders/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Virtual env
+.venv/
+venv/
+env/

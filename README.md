@@ -196,8 +196,8 @@ Phase 4: Hardware Deployment
          [ ]  Jetson Orin Nano + TensorRT
 ```
 
-**Current status (v4.0 ReinFlow — 2026-05-03):**
-20 ReinFlow runs complete. **Best eval RMSE: Run 10, 0.3005m (vs BC 0.5216m, −42%), 50/50 crashes, ~36 steps avg.** Key findings from Runs 13–20: (1) lambda_bc=0.1 locks policy near pretrained — eval RMSE unchanged regardless of training quality; (2) LR=5e-7 causes VLoss spike 30+ → collapse — fixed by LR=1e-7 in Run 19; (3) training reward ceiling 0.6948@u200 is stable, but eval RMSE stuck at 0.52m (training-eval gap). RL is improving hover reward in-distribution but the drone still crashes at ~60 steps — same as the BC baseline. The crash is not caused by VLoss instability or curriculum structure. Root cause: RL rollouts see short episodes; policy learns to maximise reward-per-step before crash rather than avoiding crashes. Next: address training-eval gap directly (longer rollouts, pre-crash state exposure, or reward reshaping for survival).
+**Current status (v4.0 — 2026-05-12):**
+Hypothesis 3a complete. IMU encoder enlarged (2.5k→34k params, grad ratio 46.8×→9.9×) + auxiliary tilt supervision (lambda_tilt=0.2). Architecture permanently upgraded. BC gate with hover+recovery mix: RMSE 2.44m 49/50 crash — recovery data poisons hover BC (destructive distribution mix). Next: hover-only Phase 3a retraining with enlarged IMU encoder → "Unshackled RL" (sigma_pos=0.30, lambda_bc=0.01, curriculum 0.1→2.0m, advantage clip[-3,3]).
 
 v4.0 architectural pivot from v3.x:
 

@@ -942,3 +942,167 @@ Detailed run analysis → [docs/dev_log_phase3b_v4.md](docs/dev_log_phase3b_v4.m
 | `RESEARCH_PLAN_v4.md` | Full v4.0 roadmap (Flow Matching + ReinFlow) |
 
 **Full v4.0 roadmap → [RESEARCH_PLAN_v4.md](RESEARCH_PLAN_v4.md)**
+
+---
+
+# v4.0 Phase 3b — Run 22 Series: Hypothesis 1 (PPO Clipped Surrogate)
+
+**Date:** 2026-05-09
+**Hypothesis:** ReinFlow's `exp(β·A_norm)` advantage weighting with β=0.1 degrades to near-BC (weight range 0.74–1.35×). Replacing with standard PPO Clipped Surrogate `min(r·A, clip(r,1±ε)·A)` should break the 0.6948 training reward ceiling.
+
+**Method:** Flow matching policy converted to SDE rollout (Gaussian noise σ=0.1 on Euler step) to obtain valid likelihood ratio for PPO. `compute_clipped_loss()` added to `models/flow_policy_v4.py`.
+
+| Run | σ | Key Changes | Peak Reward | Result |
+|-----|---|-------------|-------------|--------|
+| 22a | 0.1 | PPO clipped, lr=1e-5, n_epochs=4 | 0.5884@u200 | clip_fraction 0.70+ (σ too small) |
+| 22b | 0.3 | σ=0.1→0.3 | Similar ceiling | clip_fraction still unstable |
+| 22c | 0.1 | Additional tuning | < 0.6948 | Cannot surpass weighted MSE ceiling |
+
+**Verdict: Hypothesis 1 DENIED.** PPO clipped peak 0.5884 < weighted MSE 0.6948. Root cause: SDE noise amplifies policy gradients; 50/50 crash rate in rollout poisons advantage estimates regardless of optimizer. The bottleneck is training distribution coverage, not the loss function.
+
+---
+
+# v4.0 Phase 3c — DAgger Recovery Training: Hypothesis 2
+
+**Date:** 2026-05-09 ~ 2026-05-12
+**Hypothesis:** Policy never sees dangerous states (tilt 20–30°) during training → OOD at eval → crashes. Injecting PPO expert recovery trajectories from dangerous states into BC prior should establish a safe prior before RL restarts.
+
+## Step 1: Recovery Data Collection (DONE)
+
+- Script: `scripts/collect_data_v4_recovery.py`
+- 500 episodes, tilt uniform[0°,30°], vel ±2 m/s, PPO expert deterministic
+- PPO success rate: 90.2% (from smoke test: 3/5=60%, confirmed 90%+ in full run)
+- Output: `data/expert_demos_v4_recovery.h5` (500 ep, 1.86 GB)
+
+## Step 2: BC Mixed Training + Gate Evaluation (FAILED)
+
+**Training config (actual):**
+- 475 hover + 475 recovery episodes (RAM cap: 500 ep per source = ~11.6 GB images)
+- 500 epochs, batch_size=256 (512→OOM), lr=1e-4 cosine, ~10.5h training
+- Best val loss: **0.067009 @ epoch 65** (overfitting after; val=0.139 @ epoch 500)
+- Checkpoint: `checkpoints/flow_policy_v4/20260511_110507/best_model.pt`
+
+**BC Gate Result:**
+```
+Position RMSE: 2.3201 m   (original BC: 0.522m — WORSE)
+Crashes:       50/50
+```
+
+**Root cause analysis:** 50:50 hover:recovery mix ratio too aggressive. Recovery trajectories contain large asymmetric thrust commands (to correct 30° tilt). Starting from a normal hover position, the mixed model applies these recovery maneuvers → actively destabilizes itself. The deeper problem: **IMU encoder gradient ratio = 46.8×** (VisionEncoder dominates), so the model cannot distinguish hover-from-normal vs hover-after-tilt using IMU signals.
+
+**Decision: BC Gate FAILED → Enter Hypothesis 3.**
+
+## Step 3: RL Restart (Pending — BC gate not passed)
+
+Prerequisite: BC crash must drop below 50/50.
+
+---
+
+# v4.0 Phase 3c — Hypothesis 3: IMU Encoder Gradient Bottleneck
+
+**Date:** 2026-05-12
+**Status:** DIAGNOSED, fix pending (architecture retraining required ~14h)
+
+## Diagnosis
+
+```
+VisionEncoder:   456,032 params (4.1%)   grad_norm_sum = 4.3512
+IMUEncoder:        2,528 params (0.02%)  grad_norm_sum = 0.0929
+Gradient ratio (VisionEncoder / IMUEncoder) = 46.8×
+```
+
+Policy learns `global_cond` (288D = 256 vision + 32 IMU) almost entirely from vision. IMU's tilt/angular velocity signals cannot reach the conditioning path. FPV 64×64 cannot perceive 30° tilt (only a few pixel difference), and IMU is also ignored → policy is blind to attitude crisis → 50/50 crash.
+
+**Root cause files:** `docs/dev_log_hypothesis3_imu_encoder.md` (full diagnosis + fix plan)
+
+## Fix Plan (Hypothesis 3a) — IMPLEMENTED 2026-05-12
+
+Two simultaneous changes:
+1. **Enlarge IMU encoder:** `6→64→32` → `6→256→128` (params 2.5k → 34k, 13× increase)
+2. **Auxiliary tilt loss:** predict tilt angle from `imu_feat` (128D) → `lambda_tilt=0.2`
+
+Architecture dimension changes:
+- `imu_feature_dim`: 32 → 128
+- `global_cond_dim`: 288D (256+32) → 384D (256+128)
+- `cond_dim` (UNet): 416D (288+128 time) → 512D (384+128 time)
+
+**Files modified:**
+| File | Change |
+|------|--------|
+| `models/flow_policy_v4.py` | IMU encoder 6→256→ReLU→128→ReLU, `tilt_head` Linear(128,1), `compute_loss` updated |
+| `configs/flow_policy_v4.yaml` | `imu.hidden_dim: 256`, `imu.feature_dim: 128`, `lambda_tilt: 0.2` |
+| `scripts/train_flow_v4.py` | `tilt_gt` from rot_6d state columns, train loop updated, val loop pure flow |
+
+## Hypothesis 3a Results — ARCHITECTURE WIN, BC GATE FAIL
+
+**Architecture validation (2026-05-12):**
+- Gradient ratio: **9.9×** (was 46.8×) ✓ — IMU encoder no longer dominated by vision
+- IMU params: 34,688 (was 2,528) ✓
+- global_cond shape: (B, 384) ✓
+
+**Phase 3a training (hover + recovery mixed, 500 epochs):**
+- Best val loss: **0.0668 @ epoch 68** (< 0.080 ✓)
+- Checkpoint: `checkpoints/flow_policy_v4/20260512_055304/best_model.pt`
+- Note: val loss rose to 0.145 by epoch 500 → overfitting; epoch 68 used for eval
+
+**BC Gate Result (50 episodes):**
+```
+Position RMSE:  2.44m   (original BC: 0.522m — WORSE)
+Crashes:        49/50
+Inference:      8.4ms ✓
+```
+
+**Verdict: Hypothesis 3a DENIED** (BC gate fail) — but for a different reason than the hypothesis.
+
+## Root Cause Analysis: Recovery Data Poisoning
+
+The IMU encoder fix worked. The BC gate failure was caused by the **data mix, not the IMU capacity**:
+
+```
+Hover demos:    tiny thrust adjustments near 0.1m target
+Recovery demos: aggressive full-thrust corrective actions from 30° tilt
+
+When mixed 50:50 in BC training:
+  Policy at normal hover → "hallucinates" recovery actions
+  → Active self-destabilisation → crashes FASTER than baseline
+  → RMSE 2.44m >> 0.522m hover-only BC
+```
+
+**Key insight:** BC cannot simultaneously learn "hover quietly" and "recover aggressively" from the same global conditioning. The two distributions are destructively incompatible at BC stage. Recovery learning must be delegated 100% to RL (Phase 3c).
+
+**Architecture change is permanent.** The enlarged IMU encoder (34k params, grad ratio 9.9×) stays. Only the training data strategy changes.
+
+## Next Step: Hover-Only BC with Enlarged IMU + "Unshackled RL"
+
+### Step 1: Hover-Only Phase 3a Re-training (~14h)
+- Data: `data/expert_demos_v4.h5` only (hover, 500 episodes, no recovery mix)
+- Architecture: enlarged IMU encoder (already committed), lambda_tilt=0.2
+- Expected: val loss < 0.065 (better than original 0.063 due to IMU sensing)
+- Checkpoint will be used as pretrained base for Step 3
+
+### Step 2: RL Config Changes (apply before launching ReinFlow)
+- `sigma_pos: 0.10 → 0.30` — wider reward basin, drone can feel gradient at 0.5m deviation
+- `lambda_bc: 0.1 → 0.01` — unshackle RL from BC prior (Run 13-17 confirmed 0.1 locks policy)
+- `w_action: 0.005 → 0.05` — smooth action penalty
+
+### Step 3: Curriculum ReinFlow with Advantage Clip
+- Curriculum: 0.1m → 2.0m (same as Run 10 which gave best RMSE 0.3005m)
+- Advantage hard clip: [-3, 3] — guards hover weights from crash_penalty=-10 blowup
+- Expected: with correct IMU sensing + wider sigma_pos + unshackled lambda_bc → policy can explore recovery
+
+## Alternatives if Hover-Only BC + Unshackled RL Still Fails
+
+- **Hypothesis 3b:** Cross-attention fusion (IMU query, vision key/value) — more invasive, longer training
+- **Hypothesis 3c:** Larger image size (64→96 or 128) — requires new data collection, 2-4× compute
+
+---
+
+## Hardware Issues Encountered (2026-05-11~12)
+
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| 1000+500 eps = 17.6 GB → RAM OOM | Only 12 GB free RAM; images loaded upfront | `--hover-episodes 500` (≈11.6 GB) |
+| batch_size=512 → CUDA OOM backward | Recovery mix adds activations beyond 24GB VRAM | `batch_size: 256` in config (committed) |
+| `nohup ... &` → log empty / process dies | Cygwin shell lifecycle issues | `dppo/Scripts/python.exe` + Bash `run_in_background=true` |
+| 4 competing training processes | Failed nohup attempts each spawned a process | `ps aux | grep python`, then `kill <PID>` |
+| Task output file empty during training | Python stdout buffered until process end | Read TensorBoard EventAccumulator instead |

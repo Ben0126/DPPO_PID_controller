@@ -467,3 +467,78 @@ parser.add_argument('--n-episodes', type=int, default=300)
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-05-09 16:54:37 edit -->
+### [Auto-Log] 2026-05-09 16:54:37 — Script Fix
+
+**File:** `scripts\collect_data_v4_recovery.py`
+
+**Before:**
+```python
+from envs.quadrotor_env_v4 import QuadrotorEnvV4
+from envs.quadrotor_visual_env import QuadrotorVisualEnv
+from models.ppo_expert import PPOExpert, RunningMeanStd
+```
+
+**After:**
+```python
+from envs.quadrotor_env_v4 import QuadrotorEnvV4
+from envs.quadrotor_visual_env import QuadrotorVisualEnv
+from envs.quadrotor_dynamics import get_tilt_angle
+from models.ppo_expert import PPOExpert, RunningMeanStd
+```
+
+---
+<!-- auto-log 2026-05-09 16:54:42 edit -->
+### [Auto-Log] 2026-05-09 16:54:42 — Script Fix
+
+**File:** `scripts\collect_data_v4_recovery.py`
+
+**Before:**
+```python
+# Capture initial tilt from dynamics
+            from envs.quadrotor_env_v4 import get_tilt_angle
+            init_tilt = get_tilt_angle(base_env.dynamics.get_rotation_matrix())
+```
+
+**After:**
+```python
+# Capture initial tilt from dynamics
+            init_tilt = get_tilt_angle(base_env.dynamics.get_rotation_matrix())
+```
+
+---
+<!-- auto-log 2026-05-09 16:57:08 bash -->
+### [Auto-Log] 2026-05-09 16:57:08 — Expert Data Collection
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && python -m scripts.collect_data_v4_recovery \
+    --model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --output data/expert_demos_v4_recovery_smoke.h5 \
+    --n-episodes 5 \
+    --tilt-max 30.0 \
+    --perturb-vel 2.0 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-09 16:58:11 bash -->
+### [Auto-Log] 2026-05-09 16:58:11 — Expert Data Collection
+
+**Command:** `cd "c:\Users\User\Desktop\DPPO_PID_controller\DPPO_PID_controller" && source dppo/Scripts/activate && nohup python -m scripts.collect_data_v4_recovery \
+    --model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --output data/expert_demos_v4_recovery.h5 \
+    --n-episodes 500 \
+    --tilt-max 30.0 \
+    --perturb-vel 2.0 \
+    --pos-range 1.0 > /tmp/collect_recovery.log 2>&1 & echo "PID: $!"`
+
+**Output:**
+```
+(empty)
+```

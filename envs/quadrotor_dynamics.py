@@ -156,15 +156,25 @@ class QuadrotorDynamics:
 
         self.reset()
 
-    def reset(self, position: np.ndarray = None, velocity: np.ndarray = None):
-        """Reset to initial state (hovering at origin or given position)."""
+    def reset(self, position: np.ndarray = None, velocity: np.ndarray = None,
+              quaternion: np.ndarray = None):
+        """Reset to initial state (hovering at origin or given position).
+
+        Args:
+            position:   (3,) world NED. Default: origin.
+            velocity:   (3,) world NED. Default: zero.
+            quaternion: (4,) [qw, qx, qy, qz]. Default: identity (upright).
+                        Used by Swift-style perturbed init to start from a
+                        tilted attitude, forcing recovery learning.
+        """
         self.position = position if position is not None else np.zeros(3)
-        self.quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # upright
+        self.quaternion = (quaternion_normalize(quaternion) if quaternion is not None
+                           else np.array([1.0, 0.0, 0.0, 0.0]))
         self.velocity = velocity if velocity is not None else np.zeros(3)
         self.ang_velocity = np.zeros(3)
         self.motor_thrust = np.zeros(4)
         self._last_force_world = np.zeros(3)
-        self._last_R = np.eye(3)
+        self._last_R = quaternion_to_rotation_matrix(self.quaternion)
 
     @property
     def state(self) -> np.ndarray:
