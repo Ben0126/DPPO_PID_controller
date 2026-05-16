@@ -2880,3 +2880,191 @@ echo "u450 eval PID: $!"`
 ```
 (empty)
 ```
+
+---
+<!-- auto-log 2026-05-13 04:04:47 bash -->
+### [Auto-Log] 2026-05-13 04:04:47 — RHC Evaluation
+
+**Command:** `cd "c:/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller" && dppo/Scripts/python.exe -u -m scripts.evaluate_rhc_v4 --flow-model checkpoints/flow_policy_v4/20260512_170638/best_model.pt --ppo-model checkpoints/ppo_expert_v4/20260419_142245/best_model.pt --ppo-norm checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz 2>&1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 05:47:22 bash -->
+### [Auto-Log] 2026-05-14 05:47:22 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260513_144241/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 15:56:02 bash -->
+### [Auto-Log] 2026-05-14 15:56:02 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 16:26:26 bash -->
+### [Auto-Log] 2026-05-14 16:26:26 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 --help 2>&1 | head -40`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 16:26:41 bash -->
+### [Auto-Log] 2026-05-14 16:26:41 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 --help 2>&1 | head -40`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 16:27:40 bash -->
+### [Auto-Log] 2026-05-14 16:27:40 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --quadrotor-config configs/quadrotor_v4_eval_nodisturbance.yaml \
+    --output-dir evaluation_results/diagnostic_A_nodisturbance`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 17:02:11 bash -->
+### [Auto-Log] 2026-05-14 17:02:11 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --output-dir evaluation_results/diagnostic_T_action_1`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 17:26:35 bash -->
+### [Auto-Log] 2026-05-14 17:26:35 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-inference-steps 2 \
+    --output-dir evaluation_results/diagnostic_inference_2`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 17:26:58 bash -->
+### [Auto-Log] 2026-05-14 17:26:58 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-inference-steps 2 \
+    --output-dir evaluation_results/diagnostic_inference_2`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 17:40:13 bash -->
+### [Auto-Log] 2026-05-14 17:40:13 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-inference-steps 3 \
+    --output-dir evaluation_results/diagnostic_inference_3`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-14 17:40:35 bash -->
+### [Auto-Log] 2026-05-14 17:40:35 — RHC Evaluation
+
+**Command:** `cd /c/Users/User/Desktop/DPPO_PID_controller/DPPO_PID_controller && dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-inference-steps 3 \
+    --output-dir evaluation_results/diagnostic_inference_3`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-15 02:27:36 bash -->
+### [Auto-Log] 2026-05-15 02:27:36 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/flow_policy_v4/20260514_175219/best_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-inference-steps 2 \
+    --output-dir evaluation_results/h4_bc_epoch76`
+
+**Output:**
+```
+(empty)
+```
+
+---
+<!-- auto-log 2026-05-15 15:04:44 bash -->
+### [Auto-Log] 2026-05-15 15:04:44 — RHC Evaluation
+
+**Command:** `dppo/Scripts/python.exe -m scripts.evaluate_rhc_v4 \
+    --flow-model checkpoints/reinflow_v4/reinflow_v4_20260515_023519/best_reinflow_model.pt \
+    --ppo-model  checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --ppo-norm   checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz \
+    --n-inference-steps 2 \
+    --output-dir evaluation_results/run25_h4_rl_best`
+
+**Output:**
+```
+(empty)
+```

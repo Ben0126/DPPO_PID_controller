@@ -71,7 +71,41 @@ PPO's Gaussian output assumes a unimodal action distribution. In complex flight 
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Architecture v3.1 / v3.2 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth)
+### Architecture v4.0 H4 (Current — IMU-Dominant Fusion, 2026-05-15+)
+
+```
+┌──────────────────────────────┐  ┌──────────────────────────────┐
+│  FPV Image Stack (B,6,64,64) │  │  6D IMU [ωx,ωy,ωz, ax,ay,az] │
+│  DR: color/brightness/focal  │  │  (body frame, normalized)    │
+└──────────────┬───────────────┘  └──────────────┬───────────────┘
+               ↓                                 ↓
+┌──────────────────────────┐     ┌───────────────────────────────┐
+│  Vision Encoder (CNN)    │     │  IMU Encoder MLP              │
+│  → 256D vision_feat      │     │  Linear(6→1024→512)           │
+│  (456k params)           │     │  → 512D imu_feat              │
+└──────────────┬───────────┘     │  (532k params — DOMINANT)     │
+               │                 └──────────────┬────────────────┘
+               │    cat([256D, 512D])            │
+               └─────────────────┬──────────────┘
+                                 ↓ 768D global_cond (IMU 67%)
+                   + timestep_embed(128D)
+                                 ↓ 896D cond
+               ┌─────────────────────────────────────────┐
+               │  Flow Matching: Conditional 1D U-Net    │
+               │  + tilt_head (training-only aux loss)   │
+               │  → Velocity field v_θ (B, 4, T_pred)    │
+               └─────────────────┬───────────────────────┘
+                                 ↓ N-step Euler inference
+               ┌─────────────────────────────────────────┐
+               │  Recommended: n_inference_steps=2       │
+               │  (1-step Euler is suboptimal post-RL)   │
+               └─────────────────────────────────────────┘
+
+V/I gradient ratio: 46.8× (Original) → 9.9× (H3a) → 3.22× (H4)
+BC alone: 130 steps (H3a) → 202 steps (H4), +55%
+```
+
+### Architecture v3.1 / v3.2 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth) [Historical]
 
 ```
 ┌──────────────────────────────┐  ┌──────────────────────────────┐
@@ -196,8 +230,22 @@ Phase 4: Hardware Deployment
          [ ]  Jetson Orin Nano + TensorRT
 ```
 
-**Current status (v4.0 — 2026-05-12):**
-Hypothesis 3a complete. IMU encoder enlarged (2.5k→34k params, grad ratio 46.8×→9.9×) + auxiliary tilt supervision (lambda_tilt=0.2). Architecture permanently upgraded. BC gate with hover+recovery mix: RMSE 2.44m 49/50 crash — recovery data poisons hover BC (destructive distribution mix). Next: hover-only Phase 3a retraining with enlarged IMU encoder → "Unshackled RL" (sigma_pos=0.30, lambda_bc=0.01, curriculum 0.1→2.0m, advantage clip[-3,3]).
+**Current status (v4.0 — 2026-05-17):**
+
+**Major findings since 2026-05-13:**
+1. **RMSE was misleading the entire v4.0 effort.** It is biased toward short-lived policies (smaller integration window). Past "best" Run 10 (RMSE 0.30m) only survived 36 steps; new evaluation reveals it ranks WORST.
+2. **H4 IMU-dominant fusion = real v4.0 SOTA.** Enlarged IMU encoder to feature_dim=512 (grad ratio 46.8× → 9.9× → **3.22×**). BC alone gives 202 steps avg (vs H3a BC 130, **+55%**) without any RL.
+3. **Disturbance is NOT the crash cause.** Disabling it in eval changed nothing.
+4. **Phase lag (RHC) is secondary.** T_action=4→1 only +13% steps.
+5. **AWR mode-collapse confirmed.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate its own crash trajectories. All 27 RL runs systematically destroyed BC. Run 28 (positive-advantage mask) in progress.
+
+**New evaluation framework (飛→穩→準 hierarchy):**
+- Tier 1: `survival_rate = ep_length / max_episode_steps` (gate ≥ 50%)
+- Tier 2: `IAE_steady = mean(|e_t|)` over second half
+- Tier 3: `terminal_err = mean(|e_t|)` over last 10%
+- Composite: `score = survival × (0.6·stability + 0.4·accuracy)`
+
+See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md) for full diagnostic chain.
 
 v4.0 architectural pivot from v3.x:
 
@@ -402,14 +450,27 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 ## Evaluation Metrics / 評估指標
 
-| Metric | Current Best | v4.0 ReinFlow Result | Target | Conference |
-|--------|-------------|----------------------|--------|-----------|
-| Position RMSE | 0.069m (PPO Expert) | **0.3005m** (Run 10, best eval) / 0.5232m (Run 19) | **<0.15m** | ICRA |
-| Crash Rate | 0% (PPO Expert) | **50/50** (all v4.0 runs) | **<50%** | CoRL |
-| Inference Latency | 8.2ms (v4.0 Flow 1-step) | **8.2ms ✓** | **<16ms ✓ ACHIEVED** | CoRL/ICRA |
-| Control Frequency | ~122Hz (v4.0 1-step) | **~122Hz ✓** | **>62Hz ✓ ACHIEVED** | ICRA |
-| Training reward (hover) | 0.695 (Run 19/20 peak) | 0.6948@u200 | improve eval, not train | — |
-| Training-eval gap | RMSE 0.52m despite train reward 0.70 | **Unresolved** | close gap | — |
+### 新框架：飛→穩→準 Hierarchical Score (2026-05-15+)
+
+| Checkpoint | Score | Survive | IAE_steady | Terminal | 詮釋 |
+|-----------|-------|---------|------------|----------|------|
+| **H4 BC**（v4.0 SOTA） | **0.165** | **44.0%** | 1.473m | 2.510m | 純 BC，無 RL |
+| Run25_u50 (H4 BC + warmup) | 0.158 | 43.2% | 1.650m | 3.022m | 接近 BC |
+| H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 上一代架構 |
+| Run19_RL（舊 RMSE 排名第一）| 0.078 | 15.6% | 0.710m | 1.113m | **死得最快的精準 hover** |
+| PPO Expert（理論上限） | ~0.85 | 100% | 0.065m | 0.065m | state-based oracle |
+
+### 傳統指標（含 RMSE 偏誤警告）
+
+| Metric | PPO Expert (state) | v4.0 H4 BC (vision) | Target | 註釋 |
+|--------|-------------------|---------------------|--------|------|
+| Position RMSE | 0.065m | 1.165m | < 0.15m | **RMSE 偏袒短命 policy，已知偏誤** |
+| Crash Rate | 0% (0/50) | 50/50 (但撐 202 steps avg) | < 50% | Survival rate 是更可靠指標 |
+| Inference Latency | — | 8.2ms (1-step) / 14ms (2-step) | <16ms ✓ | 達標 |
+| Control Frequency | — | 50Hz (T_action=1, 2-step inference) | >62Hz | 略低於目標但可接受 |
+| Hierarchical Score | ~0.85 | 0.165 | > 0.50 | 主要 SOTA 指標 |
+
+**Status note:** 27 RL fine-tuning runs (Apr-May 2026) all destroyed BC policy under new metric. H4 BC alone is current best. See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md).
 
 ---
 

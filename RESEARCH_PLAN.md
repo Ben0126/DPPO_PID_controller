@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 3.9
-**Date:** 2026-05-03
-**Status:** v4.0 Phase 3b ReinFlow — 20 runs complete (2026-04-20 ~ 2026-05-03). Key finding: training reward ceiling 0.6948 (@u200) is stable across Runs 19-20, but training-eval gap persists (RMSE 0.52m). Root cause: RL improves hover reward in-distribution but does not reduce crash rate or RMSE in eval. LR=1e-7 (Run 19) solved VLoss spike; curriculum structure (n_hover, n_ramp) does not affect the ceiling. Next: address training-eval gap directly.
+**Version:** 4.0
+**Date:** 2026-05-17
+**Status:** v4.0 Phase 3b ReinFlow — 27 runs complete. **H4 architecture (IMU-dominant fusion) + new hierarchical evaluation metric** has reset the v4.0 state-of-art. H4 BC alone gives steps_avg=202 (+55% vs H3a), hierarchical score 0.165 — outperforms ALL prior RL-fine-tuned checkpoints. Five major findings (RMSE bias, disturbance not crash cause, phase lag secondary, AWR mode-collapse, OT 1-step suboptimal) recorded in [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md). Run 28 testing positive-advantage mask fix for AWR.
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -1106,3 +1106,98 @@ When mixed 50:50 in BC training:
 | `nohup ... &` → log empty / process dies | Cygwin shell lifecycle issues | `dppo/Scripts/python.exe` + Bash `run_in_background=true` |
 | 4 competing training processes | Failed nohup attempts each spawned a process | `ps aux | grep python`, then `kill <PID>` |
 | Task output file empty during training | Python stdout buffered until process end | Read TensorBoard EventAccumulator instead |
+
+---
+
+## Chapter 4: H4 Architecture & Hierarchical Metric Era (2026-05-13 ~ 2026-05-17)
+
+詳見 [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md)。
+
+### 5 個重大發現
+
+1. **RMSE 是誤導性指標**（2026-05-15）
+   - `evaluate_rhc_v4.py:92` 的 RMSE 計算只在 `ep_length` 內平均，crash 越早窗口越短 → RMSE 越小
+   - 過去 24 個 runs 的「最佳」排名（Run 10, 19, 23）在新指標下變成最差
+   - **影響：整個 v4.0 過去研究方向被誤導性指標牽著走**
+
+2. **H4 IMU-Dominant Fusion = 真正 v4.0 SOTA**（2026-05-15）
+   - IMU encoder hidden_dim 256→1024, feature_dim 128→512（H3a → H4）
+   - global_cond_dim 384→768，IMU 比例 33%→67%
+   - V/I gradient ratio: 9.9× (H3a) → 3.22× (H4)
+   - **BC alone: steps_avg 130 (H3a) → 202 (H4), +55%**
+   - **Hierarchical score: 0.165**（首次明確超越所有歷史 RL checkpoint）
+
+3. **Disturbance 不是 crash 原因**（2026-05-14）
+   - Eval 完全關閉 disturbance：steps 70 → 73（+4%，噪聲級）
+   - PPO Expert 在同環境 0/50 crash → 環境本身無 bug
+   - **否定 Run 24「training/eval domain gap」假設**
+
+4. **Phase lag (RHC) 是次要因子**（2026-05-14）
+   - T_action 4→1（80ms→28ms 控制延遲）：+13% steps
+   - n_inference_steps 1→3：+35% steps（挑戰 OT 線性插值「1-step 最優」理論）
+   - 兩者合起來 +53% steps，仍 50/50 crash → 觀測層才是瓶頸
+
+5. **AWR Mode-Collapse**（2026-05-16）
+   - PPO advantage normalization 抹平 sparse crash_penalty（變成常數偏移消失）
+   - `compute_weighted_loss` 是 weighted MSE → 強迫 policy 模仿自己的 rollout，包括 crash 行為
+   - Runs 25/26/27 都呈現相同 pattern：u200-280 peak → 單調崩潰
+   - **Reward 設計（Gaussian, Linear IAE, +Dense Risk）都無法救援，因為瓶頸在 loss function 本身**
+
+### 新評估框架：飛→穩→準
+
+實作於 [scripts/evaluate_hierarchical.py](scripts/evaluate_hierarchical.py)。
+
+```python
+# Tier 1 — 飛
+survival_rate = ep_length / max_episode_steps   # gate ≥ 0.5
+
+# Tier 2 — 穩 (skip transient)
+IAE_steady = mean(|e_t|) for t in [T/2, T]
+
+# Tier 3 — 準 (terminal)
+terminal_err = mean(|e_t|) for t in [0.9T, T]
+
+# Composite
+if survival_rate < 0.5:
+    score = 0.5 × survival_rate    # max 0.25
+else:
+    stability_score = max(0, 1 - IAE_steady / 2.0)
+    accuracy_score  = max(0, 1 - terminal_err / 2.0)
+    score = survival_rate × (0.6 × stability_score + 0.4 × accuracy_score)
+```
+
+**重評過去 7 個 checkpoints（2026-05-15）：**
+
+| Rank old (RMSE) | Rank new (Score) | Checkpoint |
+|---|---|---|
+| Run19_RL = 1st | **7th (worst)** | Tight hover, crashes at 78 steps |
+| Run25_best = 2nd | 6th | Run 25 RL peak: 86 steps, 50/50 |
+| **Run25_u50 = 7th** | **2nd** | H4 BC + warmup only |
+| H4_BC = 5th | **1st** | Pure BC, 202 steps |
+
+### Run 28 假設與計畫
+
+**Hypothesis：** PPO advantage normalization 消除 sparse crash_penalty 訊號 → AWR mode-collapse。
+**修正：** `compute_weighted_loss(positive_mask=True)` — 硬遮罩負 advantage 樣本。
+**Loss 變化：**
+
+```python
+# Old: 所有 sample 都學，只是權重不同
+return (weights * mse).mean()
+
+# New: 只學 advantage > 0 的 sample
+mask = (advantages > 0).float()
+return (weights * mse * mask).sum() / (mask.sum() + 1e-8)
+```
+
+**判讀標準：**
+- score > 0.165 (H4 BC) → 突破，繼續調 positive_mask 變體
+- score ≤ 0.10 → AWR 對此任務無解，接受 H4 BC 為 SOTA 寫 negative result paper
+
+### 接下來方向（依 Run 28 結果分支）
+
+| 路徑 A：Run 28 成功 | 路徑 B：Run 28 仍失敗 |
+|----------------------|----------------------|
+| 持續優化 RL，目標 score > 0.30 | 接受 H4 BC 為 SOTA |
+| 嘗試更多 positive mask 變體（threshold, soft mask）| 寫 negative result：vision-only diffusion + AWR systematically fails |
+| 引入 cross-attention（H4 → H5）作為架構升級 | 強調三層 negative findings：RMSE bias、AWR collapse、IMU starvation |

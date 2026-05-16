@@ -18,8 +18,9 @@ is fine-tuned with D²PPO (Dispersive PPO) advantage-weighted RL to overcome cov
 | v4.0 Ph.1 | CTBR PPO Expert | Done — RMSE 0.0649m, 0/50 crashes (`20260419_142245`) |
 | v4.0 Ph.2 | FPV Data Collection v4.0 | Done — `data/expert_demos_v4.h5` (1000 ep, 3.9GB, 0 crashes) |
 | v4.0 Ph.3a | Flow Matching supervised pre-training | Done — best val=0.0630 (`flow_policy_v4/20260420_034314`) |
-| **v4.0 Ph.3b** | **ReinFlow RL Fine-tuning** | **Runs 22a/b/c (05-09~05-11): PPO Clipped Surrogate tested (Hypothesis 1 DENIED — PPO peak 0.5884 < weighted MSE 0.6948). Root cause: 50/50 crash in rollout poisons advantages regardless of optimizer.** |
-| **v4.0 Ph.3c** | **DAgger Recovery (Hypothesis 2)** | **In progress (05-11): Recovery data collected (500 ep, 90.2% PPO success). BC mixed training running (`flow_policy_v4/20260511_110507`, 500h+500r eps, batch=256). Gate: BC crash < 50/50 → Step 3 RL; = 50/50 → Hypothesis 3 (IMU encoder bottleneck).** |
+| **v4.0 Ph.3b** | **ReinFlow RL Fine-tuning** | **27 runs through 2026-05-17. H4 BC (IMU-dominant fusion, score 0.165) is v4.0 SOTA. All RL runs systematically destroy BC. Run 28 (positive-advantage mask) in progress.** |
+| ~~v4.0 Ph.3c~~ | ~~DAgger Recovery~~ | DENIED (2026-05-12): recovery data poisons hover BC (49/50 crash, RMSE 2.44m). |
+| **v4.0 Ph.3d** | **H4 Architecture + Hierarchical Metric** | Done — H4 IMU encoder (feature_dim 512, V/I grad ratio 3.22×); new 飛→穩→準 eval metric; RMSE bias and AWR mode-collapse identified |
 | v4.0 Ph.4 | Hardware deployment (Jetson Orin Nano) | Future |
 | v3.3 ref | DPPO v3.3 best result | Done — Run 1: RMSE 0.1039m, 50/50 crashes |
 
@@ -92,7 +93,15 @@ python -m scripts.train_dppo \
 # --- Phase 3a: Supervised training (only if re-running from scratch) ---
 python -m scripts.train_diffusion --config configs/diffusion_policy.yaml
 
-# --- RHC closed-loop evaluation ---
+# --- Hierarchical evaluation (新 SOTA metric: 飛→穩→準) ---
+# Auto-detects H3a / H4 architecture from checkpoint state_dict.
+dppo/Scripts/python.exe -m scripts.evaluate_hierarchical \
+    --n-episodes 20 \
+    --ckpts \
+        "H4_BC:checkpoints/flow_policy_v4/20260514_175219/best_model.pt" \
+        "Run25_best:checkpoints/reinflow_v4/reinflow_v4_20260515_023519/best_reinflow_model.pt"
+
+# --- RHC closed-loop evaluation (legacy RMSE; WARNING: RMSE is biased toward short-lived policies) ---
 python -m scripts.evaluate_rhc \
     --diffusion-model checkpoints/diffusion_policy/<timestamp>/best_model.pt \
     --ppo-model checkpoints/ppo_expert/20260401_103107/best_model.pt \
@@ -115,12 +124,13 @@ tensorboard --logdir logs/diffusion_policy/
 | Artifact | Path |
 |----------|------|
 | v4.0 CTBR PPO Expert | `checkpoints/ppo_expert_v4/20260419_142245/best_model.pt` |
-| v4.0 Flow Matching supervised | `checkpoints/flow_policy_v4/20260420_034314/best_model.pt` |
-| v4.0 ReinFlow Run 10 (best eval, 0.3005m) | `checkpoints/reinflow_v4/reinflow_v4_<run10_ts>/best_reinflow_model.pt` |
-| v4.0 ReinFlow Run 19 (best training reward, 0.6948) | `checkpoints/reinflow_v4/reinflow_v4_20260502_162154/best_reinflow_model.pt` |
-| v4.0 BC mixed (DAgger Step 2, in progress) | `checkpoints/flow_policy_v4/20260511_110507/best_model.pt` |
-| Recovery demos (DAgger Step 1) | `data/expert_demos_v4_recovery.h5` (500 ep, 1.86GB, 90.2% PPO success) |
-| v3.3 DPPO Run 1 (best v3.x result, 0.1039m) | `checkpoints/diffusion_policy/dppo_v33_20260413_033647/best_dppo_v33_model.pt` |
+| v4.0 Flow Matching BC (original arch, historical) | `checkpoints/flow_policy_v4/20260420_034314/best_model.pt` |
+| v4.0 H3a hover-only BC (IMU 128D) | `checkpoints/flow_policy_v4/20260512_170638/best_model.pt` |
+| **v4.0 H4 BC (current SOTA, IMU 512D)** | **`checkpoints/flow_policy_v4/20260514_175219/best_model.pt`** |
+| v4.0 Run 23 (H3a + RL hover-only) | `checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt` |
+| v4.0 Run 25 (H4 + RL, AWR mode-collapse) | `checkpoints/reinflow_v4/reinflow_v4_20260515_023519/best_reinflow_model.pt` |
+| v4.0 Run 26 (H4 + Linear IAE reward) | `checkpoints/reinflow_v4/reinflow_v4_20260516_052606/best_reinflow_model.pt` |
+| v3.3 DPPO Run 1 (best v3.x result, 0.1039m RMSE — known biased) | `checkpoints/diffusion_policy/dppo_v33_20260413_033647/best_dppo_v33_model.pt` |
 
 ---
 
@@ -138,17 +148,24 @@ D²PPO loss: L = E[ exp(β × A_norm) × ||ε_θ(a,τ,s) − ε||² ]
 Value net:  ValueNetwork(feature_dim=256, hidden_dim=256) → scalar V(s)
 ```
 
-**Architecture v3.1 (Phase 3c, pending):**
+**Architecture H4 (Current SOTA, 2026-05-15+):**
+```
+FPV image stack (6×64×64) → VisionEncoder → 256D vision_feat (456k params)
+6D IMU [ω,a]              → IMUEncoder MLP(6→1024→512) → 512D imu_feat (532k params, DOMINANT)
+cat([256D, 512D])          → 768D global_cond  (IMU 67%)
+768D + timestep(128D)      → 896D cond → ConditionalUnet1D → velocity field v_θ
+
+[Training only] 512D imu_feat → tilt_head Linear(512,1) → predicted tilt rad
+
+V/I gradient ratio: 46.8× (Original) → 9.9× (H3a) → 3.22× (H4)
+Inference: 2-step Euler (14ms, recommended; 1-step is suboptimal post-RL)
+```
+
+**Architecture v3.1 (Phase 3c, historical):**
 ```
 FPV image stack (6×64×64) → VisionEncoder → 256D vision_feat
 6D IMU [ω,a]              → IMUEncoder MLP(6→64→32) → 32D imu_feat
 cat([256D, 32D])           → 288D global_cond
-288D + timestep(128D)      → 416D cond → ConditionalUnet1D → ε_θ
-
-[Training only] 256D vision_feat → FCN DepthDecoder → (1,64,64) depth_pred
-
-L = exp(β×A) × L_diff + λ_disp × L_dispersive + λ_depth × MSE(depth)
-Value net: ValueNetworkV31(global_cond_dim=288) → scalar V(s)
 ```
 
 ---
@@ -321,22 +338,32 @@ curriculum:
 
 ---
 
-## Results Summary
+## Results Summary (Hierarchical Metric — 飛→穩→準, 2026-05-15+)
 
-| Phase | Model | Pos RMSE | Crashes | Notes |
-|-------|-------|----------|---------|-------|
-| v4.0 Ph.1 | CTBR PPO Expert | **0.065m** | 0/50 | Gold standard (v4.0) |
-| v4.0 Ph.3a | Flow Matching BC | 0.522m | 50/50 | Covariate shift — expected |
-| v4.0 Run 10 | ReinFlow (curriculum 2.0m) | **0.3005m** | 50/50 | Best eval RMSE; 36 steps avg |
-| v4.0 Run 12 | ReinFlow (anchored, soft penalty) | 0.2975m | 50/50 | Hover quality ↑ but crash penalty mismatch |
-| v4.0 Run 19 | ReinFlow (LR=1e-7) | 0.5232m | 50/50 | Training reward 0.695 but eval unchanged |
-| v3.3 Run 1 | DPPO v3.3 | **0.1039m** | 50/50 | Best cross-architecture RMSE |
+| Rank | Checkpoint | Score | Survive | IAE_steady | Term err | Steps avg |
+|------|-----------|-------|---------|------------|----------|-----------|
+| 1 | **H4 BC** (current SOTA) | **0.165** | 44.0% | 1.473m | 2.510m | **202** |
+| 2 | Run25_u50 (BC + warmup) | 0.158 | 43.2% | 1.650m | 3.022m | 197 |
+| 3 | H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 197 |
+| 4 | Run25_u200 | 0.128 | 26.6% | 0.976m | 1.694m | 121 |
+| 5 | Run23_RL | 0.093 | 18.6% | 0.770m | 1.272m | 86 |
+| 6 | Run25_best | 0.086 | 17.1% | 0.713m | 1.119m | 79 |
+| 7 | Run19_RL (old "best") | 0.078 | 15.6% | 0.710m | 1.113m | 71 |
+| ref | PPO Expert (state-based) | ~0.85 | 100% | 0.065m | 0.065m | 500 |
 
-**v4.0 current best eval:** Run 10 (RMSE 0.3005m) — still 50/50 crash.
-**Training reward ceiling:** 0.6948@u200 (Runs 19-20) — stable but doesn't reduce eval crashes.
-**Training-eval gap confirmed (Runs 13-20):** RL improves hover reward from 0.529→0.695 but eval RMSE stays ~0.52m. Drone crashes at ~60 steps regardless of training reward quality.
-**Next direction:** Address the training-eval gap — the policy is not learning crash avoidance, only in-distribution reward maximisation.
-**Inference:** v4.0 flow matching 1-step = ~8.2ms (~122Hz) ✓ — latency target already met.
+**v4.0 current SOTA:** **H4 BC** (score 0.165, 202 steps avg, no RL fine-tuning).
+**Inference:** 14ms with n_steps=2 (recommended; 1-step is suboptimal post-RL).
+**Latency target:** ✓ met (still under 20ms @ 50Hz control period).
+
+### Five Major Findings (2026-05-13~17)
+
+1. **RMSE bias confirmed.** `evaluate_rhc_v4.py:92` divides by `ep_length` not `max_episode_steps` → short-lived policies get artificially low RMSE. Past 24 runs misranked.
+2. **Disturbance not crash cause.** Eval with disturbance OFF: same ~73 step crash. Run 24 hypothesis denied.
+3. **Phase lag secondary.** T_action 4→1: +13%. n_inference_steps 1→3: +35%. Total +53% steps, still 50/50.
+4. **H4 IMU dominance = real v4.0 SOTA.** feature_dim 128→512, grad ratio 9.9→3.22, BC steps 130→202 (+55%).
+5. **AWR mode-collapse.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate own crash trajectories. All RL runs degrade systematically. Fix in test: positive-advantage mask (Run 28).
+
+See `docs/dev_log_v4_h4_hierarchical.md` for full diagnostic chain.
 
 ---
 

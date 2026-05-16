@@ -584,3 +584,19 @@ i = sum(p.grad.norm().item() for p in model.imu_encoder.parameters() if p.grad i
 print(f'Ratio: {v/i:.1f}x  (target: < 10x)')
 "
 ```
+
+---
+
+## 後續：H4 Architecture & Hierarchical Metric Era →
+
+本檔結束於 Hypothesis 3a 完成 + Hover-Only BC 計畫（2026-05-12）。
+
+**接續開發紀錄**（Runs 21-28，含 H4 IMU dominance、hierarchical eval、IAE reward、AWR diagnosis）：
+
+→ **[dev_log_v4_h4_hierarchical.md](dev_log_v4_h4_hierarchical.md)**
+
+關鍵突破：
+- **H4 BC（無 RL）超越所有歷史 RL checkpoint**，hierarchical score 0.165
+- 揭露 **RMSE 偏誤** —— 過去 24 個 runs 的「最佳」其實是「最短命」
+- **Disturbance 不是 crash 原因**，Phase lag 也是次要因子
+- **AWR mode-collapse** 是 RL 持續失敗的核心原因

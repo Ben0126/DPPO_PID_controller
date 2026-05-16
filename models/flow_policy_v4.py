@@ -24,11 +24,15 @@ Replaces DDPM with Conditional Flow Matching (linear interpolant / OT-CFM):
 No cosine schedule. Max velocity magnitude = ||ε - x_0|| = O(1).
 Avoids 64× amplification of DDPM at t=99.
 
-Architecture (Hypothesis 3a — enlarged IMU encoder):
-  VisionEncoder (CNN, 6ch → 256D) + IMUEncoder (MLP, 6D → 128D)
-  global_cond = cat([256D, 128D]) = 384D
-  FlowNet = ConditionalUnet1d with cond_dim = 384 + 128 = 512D
-  tilt_head = Linear(128, 1)  — training-only auxiliary tilt supervision
+Architecture (Hypothesis 4 — IMU-dominant fusion):
+  VisionEncoder (CNN, 6ch → 256D) + IMUEncoder (MLP, 6D → 512D)
+  global_cond = cat([256D, 512D]) = 768D (IMU is now 67% of conditioning)
+  FlowNet = ConditionalUnet1d with cond_dim = 768 + 128 = 896D
+  tilt_head = Linear(512, 1)  — training-only auxiliary tilt supervision
+
+Motivation: H3a (32→128 IMU) showed vision still dominated rollout behaviour
+(50/50 crash, slow drift). H4 inverts the ratio so IMU drives high-frequency
+attitude control while vision provides slow position reference.
 """
 
 import math
@@ -60,7 +64,7 @@ class FlowMatchingPolicyV4(nn.Module):
     def __init__(
         self,
         vision_feature_dim: int = 256,
-        imu_feature_dim: int = 128,
+        imu_feature_dim: int = 512,
         time_embed_dim: int = 128,
         down_dims: tuple = (256, 512),
         T_obs: int = 2,
@@ -75,7 +79,7 @@ class FlowMatchingPolicyV4(nn.Module):
         self.n_inference_steps = n_inference_steps
         self.t_embed_scale = t_embed_scale
 
-        global_cond_dim = vision_feature_dim + imu_feature_dim  # 384
+        global_cond_dim = vision_feature_dim + imu_feature_dim  # 768 (H4)
 
         self.vision_encoder = VisionEncoder(
             in_channels=T_obs * 3,
@@ -83,9 +87,9 @@ class FlowMatchingPolicyV4(nn.Module):
         )
 
         self.imu_encoder = nn.Sequential(
-            nn.Linear(6, 256),
+            nn.Linear(6, 1024),
             nn.ReLU(),
-            nn.Linear(256, imu_feature_dim),  # imu_feature_dim=128
+            nn.Linear(1024, imu_feature_dim),  # imu_feature_dim=512 (H4)
             nn.ReLU(),
         )
 
@@ -111,11 +115,11 @@ class FlowMatchingPolicyV4(nn.Module):
             imu:    (B, 6) normalised physics IMU
 
         Returns:
-            global_cond: (B, 288)
+            global_cond: (B, 768)
         """
         vis_feat = self.vision_encoder(images)      # (B, 256)
-        imu_feat = self.imu_encoder(imu)             # (B, 128)
-        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
+        imu_feat = self.imu_encoder(imu)             # (B, 512)
+        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 768)
 
     def _t_to_int(self, t: torch.Tensor) -> torch.Tensor:
         """Scale continuous t∈[0,1] → integer index for sinusoidal embedding."""
@@ -151,8 +155,8 @@ class FlowMatchingPolicyV4(nn.Module):
 
         # Inline encode to reuse imu_feat for tilt head
         vis_feat = self.vision_encoder(images)             # (B, 256)
-        imu_feat = self.imu_encoder(imu)                   # (B, 128)
-        global_cond = torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
+        imu_feat = self.imu_encoder(imu)                   # (B, 512)
+        global_cond = torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 768)
 
         t = torch.rand(B, device=device)                   # (B,) ~ U[0,1]
         eps = torch.randn_like(actions)                    # (B, 4, T_pred)
@@ -185,20 +189,24 @@ class FlowMatchingPolicyV4(nn.Module):
         advantages: torch.Tensor,
         beta: float,
         fixed_x1: Optional[torch.Tensor] = None,
+        positive_mask: bool = False,
     ) -> torch.Tensor:
         """
         Advantage-weighted flow matching loss for ReinFlow.
 
-        Uses t=1.0 and the stored rollout noise x1 for stable gradient estimates.
-        Only positive-advantage steps contribute to the loss.
-
         Args:
-            images:     (B, T_obs*3, H, W) float32 [0, 1]
-            imu:        (B, 6)
-            actions:    (B, action_dim, T_pred) — rollout actions as x_0
-            advantages: (B,) normalised GAE advantages
-            beta:       temperature for exponential weighting
-            fixed_x1:   (B, action_dim, T_pred) stored rollout noise (optional)
+            images:        (B, T_obs*3, H, W) float32 [0, 1]
+            imu:           (B, 6)
+            actions:       (B, action_dim, T_pred) — rollout actions as x_0
+            advantages:    (B,) normalised GAE advantages
+            beta:          temperature for exponential weighting
+            fixed_x1:      (B, action_dim, T_pred) stored rollout noise (optional)
+            positive_mask: if True, only train on samples with advantage > 0.
+                           Prevents AWR mode-collapse on crash trajectories
+                           (Runs 25/26/27 showed monotonic policy degradation when
+                           policy was forced to imitate its own bad rollouts).
+                           When True, negative-advantage actions are completely
+                           ignored (not just down-weighted).
 
         Returns:
             loss: scalar
@@ -224,8 +232,14 @@ class FlowMatchingPolicyV4(nn.Module):
         v_pred = self.flow_net(x_t, t_int, global_cond)
 
         weights = torch.exp(beta * advantages).clamp(max=20.0).detach()  # (B,)
-
         mse = F.mse_loss(v_pred, v_target, reduction='none').mean(dim=[1, 2])  # (B,)
+
+        if positive_mask:
+            # Hard filter: zero out negative-advantage samples
+            mask = (advantages > 0).float().detach()
+            num_positive = mask.sum().clamp(min=1.0)
+            return (weights * mse * mask).sum() / num_positive
+
         return (weights * mse).mean()
 
     def compute_clipped_loss(

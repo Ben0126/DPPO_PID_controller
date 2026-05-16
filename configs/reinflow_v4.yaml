@@ -1,36 +1,44 @@
 # ReinFlow v4.0 Configuration
-# Run 22: PPO Clipped Surrogate — replace exp(β·A) weighted MSE with true PPO
-#   - SDE rollout: a = μ_old + σ·ε, enabling Gaussian likelihood ratios
-#   - log_ratio = -0.5/σ² × [||a−μ_new||² − ||a−μ_old||²]
-#   - PPO trust region makes LR=1e-5 (100× increase) safe; n_epochs=4 now meaningful
-#   - curriculum disabled to isolate single variable: does true PPO break the 0.6948 ceiling?
-#   - total_updates=200 for short sanity test; extend to 700 if hypothesis confirmed
+# Run 28 (H4 + Dense Risk + Positive-Advantage Mask): fix AWR mode-collapse.
+#   Run 27 finding: dense risk signal still degraded after u259 — same monotonic decay as Run 25/26.
+#   Root cause: AWR weighted-MSE loss STILL forces policy to mimic negative-advantage actions
+#               (just with lower weight 0.74×). Policy mode-collapses on crash trajectories.
+#   Fix: positive_advantage_mask=true — hard mask out adv<0 samples (not learn crash behaviors).
+#   Keep Run 27's dense reward (tilt² + ω²) for clean comparison.
+#   Pretrained: H4 BC (epoch 76) checkpoints/flow_policy_v4/20260514_175219/best_model.pt
 
 rl:
-  loss_type: clipped              # clipped | weighted
-  sde_noise_std: 0.3              # Run22b: σ=0.1 → sensitivity 50x (too high). σ=0.3 → 5.6x (target 2-5x)
-  clip_epsilon: 0.2               # PPO clip range
-  learning_rate: 1.0e-5           # 100× higher than Run 19/20: PPO trust region is the safety net
+  loss_type: weighted               # back to weighted MSE (Run 22 confirmed clipped < weighted)
+  sde_noise_std: 0.1                # unused for weighted loss
+  clip_epsilon: 0.2
+  learning_rate: 1.0e-7             # Run 19 confirmed: 5e-7 causes VLoss spike 30+; 1e-7 self-corrects
   value_lr: 1.0e-3
   value_hidden_dim: 256
   n_rollout_steps: 4096
-  n_epochs: 4                     # was 1: PPO clipping makes multi-epoch safe
+  n_epochs: 1
   mini_batch: 256
   gamma: 0.99
   gae_lambda: 0.95
-  advantage_beta: 0.1             # kept but unused when loss_type=clipped
+  advantage_beta: 0.1               # exp(0.1×A) → weight range [0.74, 1.35×] — gentle
   grad_clip: 1.0
-  value_warmup_updates: 50        # was 100: shorter warmup, gate still guards
-  vloss_gate: 50.0              # was 10.0: no-curriculum env has higher VLoss variance
+  value_warmup_updates: 50
+  vloss_gate: 999.0               # Run 22: disabled — 50/50 crash env makes vloss irreducible ~55
   vloss_best_threshold: 100.0
   save_freq_ckpt: 10
-  total_updates: 200              # short sanity test; extend to 700 after confirmation
-  lambda_bc: 0.001                # was 0.01: PPO clip already constrains policy
+  total_updates: 700
+  lambda_bc: 0.01                   # 0.1 → locks policy (Runs 13-17); 0.01 → unshackled
+  positive_advantage_mask: true     # Run 28: hard-mask adv<0 samples → no crash imitation
   demo_path: data/expert_demos_v4.h5
   demo_episodes: 100
 
 curriculum:
-  enabled: false                  # disabled to isolate loss_type as single variable
+  enabled: true
+  n_hover_updates: 600              # Run 23: effectively no ramp (700 total, gate at 50 → 550 hover updates)
+  n_ramp_updates: 200               # Stage 2: unused (600+50 > 700)
+  pos_start: 0.1
+  pos_end: 2.0                      # same as Run 10 (best RMSE 0.3005m)
+  vel_start: 0.3
+  vel_end: 2.0
 
 logging:
   tensorboard_log: "./logs/reinflow_v4/"

@@ -9,21 +9,24 @@ vision:
 
 imu:
   input_dim: 6                    # [gyro(3), specific_force_norm(3)]
-  hidden_dim: 256                 # 64 → 256 (Hypothesis 3a: 13× capacity increase)
-  feature_dim: 128                # 32 → 128
-  # global_cond_dim = vision(256) + imu(128) = 384
+  hidden_dim: 1024                # H3a: 64→256, H4: 256→1024 (IMU dominance: 4× capacity)
+  feature_dim: 512                # H3a: 32→128, H4: 128→512 (IMU 33%→67% of global_cond)
+  # global_cond_dim = vision(256) + imu(512) = 768 — IMU now dominant signal pathway
 
 unet:
   down_dims: [256, 512]
   kernel_size: 5
   n_groups: 8
   time_embed_dim: 128
-  # cond_dim = global_cond(384) + time_embed(128) = 512
+  # cond_dim = global_cond(768) + time_embed(128) = 896
 
 action:
   T_pred: 8                       # prediction horizon
-  T_action: 4                     # execution horizon (RHC)
+  T_action: 1                     # Run 24+: 4→1, phase lag 80ms→28ms (closed-loop at 50Hz)
   action_dim: 4                   # CTBR: [F_c_norm, wx, wy, wz]
+
+# H4 finding: 1-step Euler inference is suboptimal post-RL (non-linear velocity field).
+# Recommend n_inference_steps=2 (14ms, well within 20ms control period).
 
 flow:
   n_inference_steps: 1            # 1-step Euler (pure OT flow matching)

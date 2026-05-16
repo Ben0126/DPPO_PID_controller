@@ -233,6 +233,7 @@ class QuadrotorEnvV4(gym.Env):
         self.waypoint_range        = e.get('waypoint_range', 2.0)
 
         r = self.config['reward']
+        self.reward_type  = r.get('reward_type', 'gaussian')
         self.sigma_pos    = r['sigma_pos']
         self.sigma_z      = r.get('sigma_z', r['sigma_pos'])
         self.sigma_vel    = r['sigma_vel']
@@ -246,6 +247,7 @@ class QuadrotorEnvV4(gym.Env):
         self.crash_penalty = r['crash_penalty']
         self.w_brake      = r.get('w_brake', 0.0)
         self.sigma_brake  = r.get('sigma_brake', 0.3)
+        self.w_tilt       = r.get('w_tilt', 0.0)   # Run 27: dense tilt² penalty
 
         d = self.config['disturbance']
         self.disturbance_enabled           = d['enabled']
@@ -426,6 +428,8 @@ class QuadrotorEnvV4(gym.Env):
         ]).astype(np.float32)
 
     def _calculate_reward(self, action: np.ndarray, F_c: float) -> float:
+        if self.reward_type == 'linear_iae':
+            return self._calculate_reward_iae(action, F_c)
         pos_error = self.target_position - self.dynamics.position
         vel       = self.dynamics.velocity
         omega     = self.dynamics.ang_velocity
@@ -458,6 +462,49 @@ class QuadrotorEnvV4(gym.Env):
                       * np.exp(-dist_xy / self.sigma_brake))
 
         return pos_rew + z_rew + vel_rew + ang_rew - action_pen - brake_pen + self.alive_bonus
+
+    def _calculate_reward_iae(self, action: np.ndarray, F_c: float) -> float:
+        """Linear IAE + dense risk signal — aligned with 飛→穩→準 hierarchy.
+
+        Run 27 fix for PPO normalization absorbing crash_penalty (constant offset):
+        every step now carries a DENSE risk penalty proportional to crash precursors
+        (tilt² + ω²). These vary across steps within an episode and survive
+        advantage normalization.
+
+        Tier 1 (飛):  alive_bonus + crash_penalty (terminal) + DENSE tilt² penalty
+                     (rises as drone approaches max_tilt termination threshold)
+        Tier 2 (穩):  linear |vel| + QUADRATIC ω² (strong gradient at high oscillation)
+        Tier 3 (準):  linear |position_error| (true IAE form)
+        """
+        pos_error = self.target_position - self.dynamics.position
+        vel       = self.dynamics.velocity
+        omega     = self.dynamics.ang_velocity
+
+        # Tier 3: linear IAE position penalty
+        pos_pen   = self.w_pos * np.linalg.norm(pos_error)
+
+        # Tier 2: stability — quadratic omega² (was linear, now stronger gradient near risk)
+        vel_pen   = self.w_vel * np.linalg.norm(vel)
+        omega_pen = self.w_ang * np.sum(omega**2)
+
+        # Tier 1: dense crash-precursor penalty — tilt²
+        # tilt in radians; max_tilt_deg=60° terminates → tilt_rad_max ≈ 1.047
+        # At tilt=30°  → tilt²=0.274  → -w_tilt × 0.274
+        # At tilt=60°  → tilt²=1.097  → -w_tilt × 1.097  (4× worse, dense risk signal)
+        R = self.dynamics.get_rotation_matrix()
+        tilt_rad  = np.arccos(np.clip(R[2, 2], -1.0, 1.0))
+        tilt_pen  = self.w_tilt * tilt_rad ** 2
+
+        # Action smoothness
+        F_hover_norm = (self.hover_thrust * 4 / self.F_c_max) * 2 - 1
+        action_dev   = np.array([
+            action[0] - F_hover_norm,
+            action[1], action[2], action[3],
+        ])
+        action_pen = self.w_action * np.sum(action_dev**2)
+
+        return (self.alive_bonus - pos_pen - vel_pen - omega_pen
+                - tilt_pen - action_pen)
 
     def _check_termination(self) -> bool:
         if np.any(np.abs(self.dynamics.position) > self.position_bound):

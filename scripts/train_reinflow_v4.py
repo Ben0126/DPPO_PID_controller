@@ -265,6 +265,7 @@ def train(args):
     loss_type            = rl_cfg.get('loss_type', 'weighted')
     sde_noise_std        = rl_cfg.get('sde_noise_std', 0.0)
     clip_epsilon         = rl_cfg.get('clip_epsilon', 0.2)
+    positive_mask        = rl_cfg.get('positive_advantage_mask', False)  # Run 28
 
     # Curriculum config
     with open(args.rl_config, 'r', encoding='utf-8') as f:
@@ -442,7 +443,8 @@ def train(args):
                         epoch_lr_stds.append(lr_std)
                     else:
                         rl_loss = policy.compute_weighted_loss(
-                            imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta)
+                            imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta,
+                            positive_mask=positive_mask)
 
                     # BC regularization: anchor policy to expert demos
                     if lambda_bc > 0 and N_demo > 0:

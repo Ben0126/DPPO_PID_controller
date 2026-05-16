@@ -1,9 +1,7 @@
 # Vision-DPPO v4.0 RL Training Configuration
-# Used ONLY for ReinFlow rollout collection — NOT for evaluation.
-# Key differences vs quadrotor_v4.yaml:
-#   1. Larger initial_vel_range → drone starts with random velocity (OOD from step 0)
-#   2. Stronger disturbances → forces recovery scenarios during each episode
-# Goal: RL training sees OOD states and learns recovery, not just hover-at-origin.
+# Run 24: disturbance matched to eval (0.3N) to eliminate domain gap.
+# Run 23 finding: policy learns to over-compensate 1.0N → over-correction in 0.3N eval → crash.
+# Fix: train and eval now share same disturbance magnitude (0.3N).
 
 quadrotor:
   mass: 0.5
@@ -45,18 +43,22 @@ environment:
   waypoint_range: 2.0
 
 reward:
-  reward_type: "gaussian"
-  sigma_pos: 0.10
+  # Run 27: linear IAE + DENSE risk signal (tilt² + ω² per step).
+  # Run 26 finding: PPO advantage normalization absorbed sparse crash_penalty (constant offset).
+  # Fix: each step now carries crash-precursor penalty that varies across steps.
+  reward_type: "linear_iae"
+  sigma_pos: 0.30                 # unused for linear_iae
   sigma_z: 0.015
   sigma_vel: 1.0
   sigma_ang: 1.0
-  w_pos: 0.55
-  w_z: 0.20
-  w_vel: 0.2
-  w_ang: 0.2
+  w_pos: 0.5                      # -0.5×|e|
+  w_z: 0.0
+  w_vel: 0.05                     # -0.05×|v|
+  w_ang: 0.3                      # NEW: -0.3×|ω|² (quadratic, was 0.1 linear)
+  w_tilt: 1.0                     # NEW: -1.0×tilt² (rad²). At 30° tilt: -0.27; at 60°: -1.10 (crash threshold)
   w_action: 0.005
-  alive_bonus: 0.0
-  crash_penalty: 10.0
+  alive_bonus: 1.0                # +1/step survival
+  crash_penalty: 100.0            # backup terminal penalty
 
 domain_randomization:
   enabled: true
@@ -69,7 +71,7 @@ domain_randomization:
 
 disturbance:
   enabled: true
-  magnitude: 1.0          # Run 9: 3.3× eval (0.3N), down from Run 8's 2.0N — less V variance
-  torque_magnitude: 0.08
+  magnitude: 0.3          # Run 24: matched to eval (was 1.0N → domain gap → over-correction → crash)
+  torque_magnitude: 0.02  # matched to eval
   probability: 0.01
-  duration: 0.3           # 3× longer than eval — sustained pushes
+  duration: 0.1           # matched to eval

@@ -2544,3 +2544,601 @@ model.eval()
                     # val loss = pure flow matching only (comparable across runs)
                     val_loss += model.compute_loss(images, imu, actions).item()
 ```
+
+---
+<!-- auto-log 2026-05-14 16:26:56 write -->
+### [Auto-Log] 2026-05-14 16:26:56 — New File: Config / HP Change
+
+**File:** `configs\quadrotor_v4_eval_nodisturbance.yaml`
+
+**Content:**
+```yaml
+# Diagnostic Experiment A: same as quadrotor_v4.yaml but disturbance disabled.
+# Purpose: confirm whether Run 23 crashes at step ~75 are disturbance-triggered or
+# caused by slow drift. If crash time changes significantly, disturbance is the trigger.
+
+quadrotor:
+  mass: 0.5
+  arm_length: 0.17
+  inertia: [0.0023, 0.0023, 0.004]
+  gravity: 9.81
+  motor_max_thrust: 4.0
+  motor_time_constant: 0.02
+  drag_coeff: 0.01
+  torque_coeff: 0.016
+
+timing:
+  dt_inner: 0.005
+  dt_outer: 0.02
+  n_inner_steps: 4
+
+ctbr:
+  F_c_max: 16.0
+  omega_max_roll: 6.0
+  omega_max_pitch: 6.0
+  omega_max_yaw: 3.0
+
+indi:
+  kp_roll: 4.0
+  kp_pitch: 4.0
+  kp_yaw: 2.5
+  tau_max_roll: 0.5
+  tau_max_pitch: 0.5
+  tau_max_yaw: 0.15
+
+environment:
+  max_episode_steps: 500
+  position_bound: 5.0
+  max_tilt_deg: 60.0
+  initial_pos_r
+... [truncated — 1509 chars total]
+```
+
+---
+<!-- auto-log 2026-05-14 17:44:32 edit -->
+### [Auto-Log] 2026-05-14 17:44:32 — Config / HP Change
+
+**File:** `configs\flow_policy_v4.yaml`
+
+**Before:**
+```yaml
+unet:
+  down_dims: [256, 512]
+  kernel_size: 5
+  n_groups: 8
+  time_embed_dim: 128
+  # cond_dim = global_cond(384) + time_embed(128) = 512
+```
+
+**After:**
+```yaml
+unet:
+  down_dims: [256, 512]
+  kernel_size: 5
+  n_groups: 8
+  time_embed_dim: 128
+  # cond_dim = global_cond(768) + time_embed(128) = 896
+```
+
+---
+<!-- auto-log 2026-05-14 17:45:00 edit -->
+### [Auto-Log] 2026-05-14 17:45:00 — Model Fix
+
+**File:** `models\flow_policy_v4.py`
+
+**Before:**
+```python
+def __init__(
+        self,
+        vision_feature_dim: int = 256,
+        imu_feature_dim: int = 128,
+        time_embed_dim: int = 128,
+        down_dims: tuple = (256, 512),
+        T_obs: int = 2,
+        T_pred: int = 8,
+        action_dim: int = 4,
+        n_inference_steps: int = 1,
+        t_embed_scale: int = 999,
+    ):
+        super().__init__()
+        self.T_pred = T_pred
+        self.action_dim = action_dim
+        self.n_inference_steps = n_inference_steps
+        self.t_embed_scale = t_embed_scale
+
+        global_cond_dim = vision_feature_dim + imu_feature_dim  # 384
+
+        self.vision_encoder = VisionEncoder(
+            in_channels=T_obs * 3,
+            feature_dim=vision_feature_dim,
+        )
+
+        self.imu_encoder = nn.Sequential(
+            nn.Linear(6, 256),
+ 
+... [truncated — 922 chars total]
+```
+
+**After:**
+```python
+def __init__(
+        self,
+        vision_feature_dim: int = 256,
+        imu_feature_dim: int = 512,
+        time_embed_dim: int = 128,
+        down_dims: tuple = (256, 512),
+        T_obs: int = 2,
+        T_pred: int = 8,
+        action_dim: int = 4,
+        n_inference_steps: int = 1,
+        t_embed_scale: int = 999,
+    ):
+        super().__init__()
+        self.T_pred = T_pred
+        self.action_dim = action_dim
+        self.n_inference_steps = n_inference_steps
+        self.t_embed_scale = t_embed_scale
+
+        global_cond_dim = vision_feature_dim + imu_feature_dim  # 768 (H4)
+
+        self.vision_encoder = VisionEncoder(
+            in_channels=T_obs * 3,
+            feature_dim=vision_feature_dim,
+        )
+
+        self.imu_encoder = nn.Sequential(
+            nn.Linear(6, 10
+... [truncated — 934 chars total]
+```
+
+---
+<!-- auto-log 2026-05-14 17:45:10 edit -->
+### [Auto-Log] 2026-05-14 17:45:10 — Model Fix
+
+**File:** `models\flow_policy_v4.py`
+
+**Before:**
+```python
+def _encode(self, images: torch.Tensor, imu: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            images: (B, T_obs*3, H, W) uint8 or float
+            imu:    (B, 6) normalised physics IMU
+
+        Returns:
+            global_cond: (B, 288)
+        """
+        vis_feat = self.vision_encoder(images)      # (B, 256)
+        imu_feat = self.imu_encoder(imu)             # (B, 128)
+        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
+```
+
+**After:**
+```python
+def _encode(self, images: torch.Tensor, imu: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            images: (B, T_obs*3, H, W) uint8 or float
+            imu:    (B, 6) normalised physics IMU
+
+        Returns:
+            global_cond: (B, 768)
+        """
+        vis_feat = self.vision_encoder(images)      # (B, 256)
+        imu_feat = self.imu_encoder(imu)             # (B, 512)
+        return torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 768)
+```
+
+---
+<!-- auto-log 2026-05-14 17:45:17 edit -->
+### [Auto-Log] 2026-05-14 17:45:17 — Model Fix
+
+**File:** `models\flow_policy_v4.py`
+
+**Before:**
+```python
+# Inline encode to reuse imu_feat for tilt head
+        vis_feat = self.vision_encoder(images)             # (B, 256)
+        imu_feat = self.imu_encoder(imu)                   # (B, 128)
+        global_cond = torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 384)
+```
+
+**After:**
+```python
+# Inline encode to reuse imu_feat for tilt head
+        vis_feat = self.vision_encoder(images)             # (B, 256)
+        imu_feat = self.imu_encoder(imu)                   # (B, 512)
+        global_cond = torch.cat([vis_feat, imu_feat], dim=-1)  # (B, 768)
+```
+
+---
+<!-- auto-log 2026-05-15 15:11:19 write -->
+### [Auto-Log] 2026-05-15 15:11:19 — New File: Script Fix
+
+**File:** `scripts\sweep_run25_checkpoints.py`
+
+**Content:**
+```python
+"""
+Sweep Run 25 checkpoints to find policy degradation curve.
+
+Eval at key updates: 50 (BC level), 200 (early climb), 300 (mid), 375 (peak),
+500 (late hover), 650 (ramp start). Reports steps avg + RMSE per checkpoint.
+"""
+import sys, os, subprocess, re
+
+CKPT_DIR = "checkpoints/reinflow_v4/reinflow_v4_20260515_023519"
+CKPTS = [50, 200, 300, 350, 400, 500, 650]
+
+def parse_output(text):
+    steps = [int(s) for s in re.findall(r'steps=(\d+)', text)]
+    rmse = re.search(r'Position RMSE:\s+([\d.]+)\s*m', text)
+    crashes = text.count('| CRASH')
+    return {
+        'steps_avg': sum(steps)/len(steps) if steps else 0,
+        'steps_min': min(steps) if steps else 0,
+        'steps_max': max(steps) if steps else 0,
+        'rmse': float(rmse.group(1)) if rmse else 0,
+        'crashes': crashes,
+
+... [truncated — 2255 chars total]
+```
+
+---
+<!-- auto-log 2026-05-15 15:11:58 edit -->
+### [Auto-Log] 2026-05-15 15:11:58 — Script Fix
+
+**File:** `scripts\sweep_run25_checkpoints.py`
+
+**Before:**
+```python
+import sys, os, subprocess, re
+
+CKPT_DIR = "checkpoints/reinflow_v4/reinflow_v4_20260515_023519"
+CKPTS = [50, 200, 300, 350, 400, 500, 650]
+```
+
+**After:**
+```python
+import sys, os, subprocess, re
+
+PY = sys.executable  # absolute path to current python (the venv one)
+CKPT_DIR = "checkpoints/reinflow_v4/reinflow_v4_20260515_023519"
+CKPTS = [50, 200, 300, 350, 400, 500, 650]
+```
+
+---
+<!-- auto-log 2026-05-15 15:12:05 edit -->
+### [Auto-Log] 2026-05-15 15:12:05 — Script Fix
+
+**File:** `scripts\sweep_run25_checkpoints.py`
+
+**Before:**
+```python
+cmd = [
+        "dppo/Scripts/python.exe", "-m", "scripts.evaluate_rhc_v4",
+```
+
+**After:**
+```python
+cmd = [
+        PY, "-m", "scripts.evaluate_rhc_v4",
+```
+
+---
+<!-- auto-log 2026-05-15 16:06:09 edit -->
+### [Auto-Log] 2026-05-15 16:06:09 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+positions.append(info['position'].copy())
+                targets.append(info.get('target_position', np.zeros(3)).copy())
+                omegas.append(info.get('angular_velocity', np.zeros(3)).copy())
+```
+
+**After:**
+```python
+positions.append(info['position'].copy())
+                targets.append(info['target'].copy())
+                omegas.append(base_env.dynamics.ang_velocity.copy())
+```
+
+---
+<!-- auto-log 2026-05-15 16:06:34 edit -->
+### [Auto-Log] 2026-05-15 16:06:34 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+for ep in range(n_episodes):
+        state, _ = visual_env.reset()
+        img_history = [state[0]]   # state is (1, H, W, 3)
+        # Pad initial observation
+        while len(img_history) < T_obs:
+            img_history.insert(0, state[0])
+
+        positions, targets, omegas = [], [], []
+        done = False
+        ep_length = 0
+        ep_reward = 0.0
+
+        while not done:
+            img_stack = np.concatenate(img_history[-T_obs:], axis=-1)  # (H, W, 6)
+            img_tensor = torch.from_numpy(img_stack).permute(2,0,1).unsqueeze(0).float().to(device) / 255.0
+            imu_tensor = torch.from_numpy(base_env.get_imu()).unsqueeze(0).float().to(device)
+
+            with torch.no_grad():
+                action_seq = policy.predict_action(img_tensor, imu_tensor).cpu().numpy()[0]  # 
+... [truncated — 1411 chars total]
+```
+
+**After:**
+```python
+for ep in range(n_episodes):
+        obs, _ = visual_env.reset()
+        image_buffer = [obs['image']] * T_obs
+        positions, targets, omegas = [], [], []
+        done = False
+        ep_length = 0
+        ep_reward = 0.0
+
+        while not done:
+            img_stack = np.concatenate(image_buffer[-T_obs:], axis=0)
+            img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device) / 255.0
+            imu_tensor = torch.from_numpy(base_env.get_imu()).float().unsqueeze(0).to(device)
+
+            with torch.no_grad():
+                action_seq = policy.predict_action(
+                    img_tensor, imu_tensor, n_steps=n_inference_steps)
+            action_seq = action_seq.squeeze(0).T.cpu().numpy()  # (T_pred, action_dim)
+
+            for a_idx in range(min(T_action, a
+... [truncated — 1349 chars total]
+```
+
+---
+<!-- auto-log 2026-05-15 16:17:30 edit -->
+### [Auto-Log] 2026-05-15 16:17:30 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+def detect_arch(ckpt_path: str) -> dict:
+    """Auto-detect architecture from checkpoint state_dict shapes."""
+    state = torch.load(ckpt_path, map_location='cpu')
+    w0 = state['imu_encoder.0.weight'].shape    # (hidden, 6)
+    w2 = state['imu_encoder.2.weight'].shape    # (feature_dim, hidden)
+    hidden_dim = w0[0]
+    feature_dim = w2[0]
+    return {'imu_hidden': hidden_dim, 'imu_feature_dim': feature_dim}
+```
+
+**After:**
+```python
+def detect_arch(ckpt_path: str) -> dict:
+    """Auto-detect architecture from checkpoint state_dict shapes."""
+    state = torch.load(ckpt_path, map_location='cpu')
+    w0 = state['imu_encoder.0.weight'].shape    # (hidden, 6)
+    w2 = state['imu_encoder.2.weight'].shape    # (feature_dim, hidden)
+    hidden_dim = w0[0]
+    feature_dim = w2[0]
+    has_tilt = 'tilt_head.weight' in state
+    # Era: Original (hidden=64, Mish, no tilt) / H3a (hidden=256, ReLU, tilt) / H4 (hidden=1024, ReLU, tilt)
+    if hidden_dim == 64:
+        era = 'Original'; activation = 'Mish'
+    elif hidden_dim == 256:
+        era = 'H3a'; activation = 'ReLU'
+    else:
+        era = 'H4'; activation = 'ReLU'
+    return {'imu_hidden': hidden_dim, 'imu_feature_dim': feature_dim,
+            'has_tilt': has_tilt, 'era': e
+... [truncated — 2200 chars total]
+```
+
+---
+<!-- auto-log 2026-05-15 16:17:43 edit -->
+### [Auto-Log] 2026-05-15 16:17:43 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+policy = FlowMatchingPolicyV4(
+        vision_feature_dim=vis_cfg['feature_dim'],
+        imu_feature_dim=imu_feature_dim,
+        time_embed_dim=cfg['unet']['time_embed_dim'],
+        down_dims=tuple(cfg['unet']['down_dims']),
+        T_obs=vis_cfg['T_obs'],
+        T_pred=act_cfg['T_pred'],
+        action_dim=act_cfg['action_dim'],
+        n_inference_steps=n_inference_steps,
+        t_embed_scale=flow_cfg['t_embed_scale'],
+    ).to(device)
+    policy.load(ckpt_path)
+    policy.eval()
+```
+
+**After:**
+```python
+policy = FlowMatchingPolicyV4(
+        vision_feature_dim=vis_cfg['feature_dim'],
+        imu_feature_dim=imu_feature_dim,
+        time_embed_dim=cfg['unet']['time_embed_dim'],
+        down_dims=tuple(cfg['unet']['down_dims']),
+        T_obs=vis_cfg['T_obs'],
+        T_pred=act_cfg['T_pred'],
+        action_dim=act_cfg['action_dim'],
+        n_inference_steps=n_inference_steps,
+        t_embed_scale=flow_cfg['t_embed_scale'],
+    ).to(device)
+    # Rebuild architecture-dependent layers to match checkpoint
+    rebuild_policy_for_arch(policy, arch, device)
+    # Load checkpoint, allowing strict=False for Original era (no tilt_head)
+    state = torch.load(ckpt_path, map_location=device)
+    missing, unexpected = policy.load_state_dict(state, strict=False)
+    if unexpected:
+        print(f"  
+... [truncated — 1113 chars total]
+```
+
+---
+<!-- auto-log 2026-05-15 16:29:38 edit -->
+### [Auto-Log] 2026-05-15 16:29:38 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+for r in sorted_results:
+        arch_tag = f"H4" if r['arch']['imu_feature_dim'] == 512 else f"H3a"
+        print(f"{r['label']:<30} {arch_tag:>6} {r['mean_score']:>6.3f} "
+```
+
+**After:**
+```python
+for r in sorted_results:
+        arch_tag = r['arch'].get('era', '?')
+        print(f"{r['label']:<30} {arch_tag:>9} {r['mean_score']:>6.3f} "
+```
+
+---
+<!-- auto-log 2026-05-15 16:45:17 edit -->
+### [Auto-Log] 2026-05-15 16:45:17 — Env Fix
+
+**File:** `envs\quadrotor_env_v4.py`
+
+**Before:**
+```python
+r = self.config['reward']
+        self.sigma_pos    = r['sigma_pos']
+        self.sigma_z      = r.get('sigma_z', r['sigma_pos'])
+        self.sigma_vel    = r['sigma_vel']
+        self.sigma_ang    = r['sigma_ang']
+        self.w_pos        = r['w_pos']
+        self.w_z          = r.get('w_z', 0.0)
+        self.w_vel        = r['w_vel']
+        self.w_ang        = r['w_ang']
+        self.w_action     = r['w_action']
+        self.alive_bonus  = r['alive_bonus']
+        self.crash_penalty = r['crash_penalty']
+        self.w_brake      = r.get('w_brake', 0.0)
+        self.sigma_brake  = r.get('sigma_brake', 0.3)
+```
+
+**After:**
+```python
+r = self.config['reward']
+        self.reward_type  = r.get('reward_type', 'gaussian')
+        self.sigma_pos    = r['sigma_pos']
+        self.sigma_z      = r.get('sigma_z', r['sigma_pos'])
+        self.sigma_vel    = r['sigma_vel']
+        self.sigma_ang    = r['sigma_ang']
+        self.w_pos        = r['w_pos']
+        self.w_z          = r.get('w_z', 0.0)
+        self.w_vel        = r['w_vel']
+        self.w_ang        = r['w_ang']
+        self.w_action     = r['w_action']
+        self.alive_bonus  = r['alive_bonus']
+        self.crash_penalty = r['crash_penalty']
+        self.w_brake      = r.get('w_brake', 0.0)
+        self.sigma_brake  = r.get('sigma_brake', 0.3)
+```
+
+---
+<!-- auto-log 2026-05-15 16:45:27 edit -->
+### [Auto-Log] 2026-05-15 16:45:27 — Env Fix
+
+**File:** `envs\quadrotor_env_v4.py`
+
+**Before:**
+```python
+def _calculate_reward(self, action: np.ndarray, F_c: float) -> float:
+        pos_error = self.target_position - self.dynamics.position
+        vel       = self.dynamics.velocity
+        omega     = self.dynamics.ang_velocity
+
+        xy_sq    = pos_error[0]**2 + pos_error[1]**2
+        pos_rew  = self.w_pos * np.exp(-xy_sq / self.sigma_pos)
+```
+
+**After:**
+```python
+def _calculate_reward(self, action: np.ndarray, F_c: float) -> float:
+        if self.reward_type == 'linear_iae':
+            return self._calculate_reward_iae(action, F_c)
+        pos_error = self.target_position - self.dynamics.position
+        vel       = self.dynamics.velocity
+        omega     = self.dynamics.ang_velocity
+
+        xy_sq    = pos_error[0]**2 + pos_error[1]**2
+        pos_rew  = self.w_pos * np.exp(-xy_sq / self.sigma_pos)
+```
+
+---
+<!-- auto-log 2026-05-16 16:58:43 edit -->
+### [Auto-Log] 2026-05-16 16:58:43 — Env Fix
+
+**File:** `envs\quadrotor_env_v4.py`
+
+**Before:**
+```python
+self.alive_bonus  = r['alive_bonus']
+        self.crash_penalty = r['crash_penalty']
+        self.w_brake      = r.get('w_brake', 0.0)
+        self.sigma_brake  = r.get('sigma_brake', 0.3)
+```
+
+**After:**
+```python
+self.alive_bonus  = r['alive_bonus']
+        self.crash_penalty = r['crash_penalty']
+        self.w_brake      = r.get('w_brake', 0.0)
+        self.sigma_brake  = r.get('sigma_brake', 0.3)
+        self.w_tilt       = r.get('w_tilt', 0.0)   # Run 27: dense tilt簡 penalty
+```
+
+---
+<!-- auto-log 2026-05-17 04:08:28 edit -->
+### [Auto-Log] 2026-05-17 04:08:28 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+loss_type            = rl_cfg.get('loss_type', 'weighted')
+    sde_noise_std        = rl_cfg.get('sde_noise_std', 0.0)
+    clip_epsilon         = rl_cfg.get('clip_epsilon', 0.2)
+```
+
+**After:**
+```python
+loss_type            = rl_cfg.get('loss_type', 'weighted')
+    sde_noise_std        = rl_cfg.get('sde_noise_std', 0.0)
+    clip_epsilon         = rl_cfg.get('clip_epsilon', 0.2)
+    positive_mask        = rl_cfg.get('positive_advantage_mask', False)  # Run 28
+```
+
+---
+<!-- auto-log 2026-05-17 04:08:35 edit -->
+### [Auto-Log] 2026-05-17 04:08:35 — Script Fix
+
+**File:** `scripts\train_reinflow_v4.py`
+
+**Before:**
+```python
+else:
+                        rl_loss = policy.compute_weighted_loss(
+                            imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta)
+```
+
+**After:**
+```python
+else:
+                        rl_loss = policy.compute_weighted_loss(
+                            imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta,
+                            positive_mask=positive_mask)
+```
