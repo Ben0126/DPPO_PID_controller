@@ -51,11 +51,15 @@ class FlowDatasetV4(Dataset):
     """
 
     def __init__(self, sources: list,
-                 T_obs: int = 2, T_pred: int = 8):
+                 T_obs: int = 2, T_pred: int = 8,
+                 hover_only: bool = False):
         """
         Args:
             sources: list of (h5_path, episode_indices) tuples.
                      Pass a single-element list for the standard single-file case.
+            hover_only: if True, skip episodes with `init_tilt_deg` attribute
+                        (recovery h5) or `episode_type != 'hover'`. Hover episodes
+                        without these attrs default to 'hover' and pass through.
         """
         self.T_obs  = T_obs
         self.T_pred = T_pred
@@ -64,6 +68,7 @@ class FlowDatasetV4(Dataset):
         self._imu_buf  = []
         self._act_buf  = []
         _tilt_buf      = []
+        skipped_count  = 0
 
         for h5_path, episode_indices in sources:
             print(f"  Loading {len(episode_indices)} episodes from {h5_path} ...")
@@ -72,6 +77,12 @@ class FlowDatasetV4(Dataset):
                     key = f'episode_{ep_idx}'
                     if key not in f:
                         continue
+                    if hover_only:
+                        ep_attrs = f[key].attrs
+                        ep_type  = ep_attrs.get('episode_type', 'hover')
+                        if ep_type != 'hover' or 'init_tilt_deg' in ep_attrs:
+                            skipped_count += 1
+                            continue
                     imgs       = f[key]['images'][:]      # (T, 3, H, W) uint8
                     acts       = f[key]['actions'][:]     # (T, 4) float32
                     imus       = f[key]['imu_data'][:]    # (T, 6) float32
@@ -97,6 +108,8 @@ class FlowDatasetV4(Dataset):
         del self._img_buf, self._imu_buf, self._act_buf, _tilt_buf
 
         N = len(self._img_arr)
+        if skipped_count > 0:
+            print(f"  [hover_only] skipped {skipped_count} non-hover episodes")
         print(f"  Total: {N:,} samples  "
               f"img={self._img_arr.nbytes/1e9:.2f}GB  "
               f"imu+act={(self._imu_arr.nbytes + self._act_arr.nbytes)/1e6:.1f}MB")
@@ -196,8 +209,10 @@ def train(args):
         print(f"Recovery mix-in: {n_rec_train} train + {n_rec_val} val episodes "
               f"from {args.recovery_h5}")
 
-    train_ds = FlowDatasetV4(train_sources, T_obs=T_obs, T_pred=T_pred)
-    val_ds   = FlowDatasetV4(val_sources,   T_obs=T_obs, T_pred=T_pred)
+    train_ds = FlowDatasetV4(train_sources, T_obs=T_obs, T_pred=T_pred,
+                             hover_only=args.hover_only)
+    val_ds   = FlowDatasetV4(val_sources,   T_obs=T_obs, T_pred=T_pred,
+                             hover_only=args.hover_only)
     print(f"Train samples: {len(train_ds):,}  |  Val samples: {len(val_ds):,}")
 
     nw = train_cfg['num_workers']
@@ -372,5 +387,8 @@ if __name__ == '__main__':
                         help='Max recovery episodes to use (0 = all)')
     parser.add_argument('--hover-episodes', type=int, default=0,
                         help='Max hover episodes to use (0 = all); use to cap RAM when mixing in recovery data')
+    parser.add_argument('--hover-only', action='store_true',
+                        help='Strict filter: skip any episode with init_tilt_deg attr '
+                             '(recovery data) or episode_type != "hover"')
     args = parser.parse_args()
     train(args)

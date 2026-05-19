@@ -3142,3 +3142,604 @@ else:
                             imgs_gpu, imu_gpu, act_gpu, adv_gpu, beta,
                             positive_mask=positive_mask)
 ```
+
+---
+<!-- auto-log 2026-05-18 06:11:07 edit -->
+### [Auto-Log] 2026-05-18 06:11:07 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+def __init__(self, sources: list,
+                 T_obs: int = 2, T_pred: int = 8):
+        """
+        Args:
+            sources: list of (h5_path, episode_indices) tuples.
+                     Pass a single-element list for the standard single-file case.
+        """
+        self.T_obs  = T_obs
+        self.T_pred = T_pred
+
+        self._img_buf  = []
+        self._imu_buf  = []
+        self._act_buf  = []
+        _tilt_buf      = []
+
+        for h5_path, episode_indices in sources:
+            print(f"  Loading {len(episode_indices)} episodes from {h5_path} ...")
+            with h5py.File(h5_path, 'r') as f:
+                for ep_idx in episode_indices:
+                    key = f'episode_{ep_idx}'
+                    if key not in f:
+                        continue
+                 
+... [truncated — 861 chars total]
+```
+
+**After:**
+```python
+def __init__(self, sources: list,
+                 T_obs: int = 2, T_pred: int = 8,
+                 hover_only: bool = False):
+        """
+        Args:
+            sources: list of (h5_path, episode_indices) tuples.
+                     Pass a single-element list for the standard single-file case.
+            hover_only: if True, skip episodes with `init_tilt_deg` attribute
+                        (recovery h5) or `episode_type != 'hover'`. Hover episodes
+                        without these attrs default to 'hover' and pass through.
+        """
+        self.T_obs  = T_obs
+        self.T_pred = T_pred
+
+        self._img_buf  = []
+        self._imu_buf  = []
+        self._act_buf  = []
+        _tilt_buf      = []
+        skipped_count  = 0
+
+        for h5_path, episode_indices in sources
+... [truncated — 1491 chars total]
+```
+
+---
+<!-- auto-log 2026-05-18 06:11:13 edit -->
+### [Auto-Log] 2026-05-18 06:11:13 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+N = len(self._img_arr)
+        print(f"  Total: {N:,} samples  "
+              f"img={self._img_arr.nbytes/1e9:.2f}GB  "
+              f"imu+act={(self._imu_arr.nbytes + self._act_arr.nbytes)/1e6:.1f}MB")
+```
+
+**After:**
+```python
+N = len(self._img_arr)
+        if skipped_count > 0:
+            print(f"  [hover_only] skipped {skipped_count} non-hover episodes")
+        print(f"  Total: {N:,} samples  "
+              f"img={self._img_arr.nbytes/1e9:.2f}GB  "
+              f"imu+act={(self._imu_arr.nbytes + self._act_arr.nbytes)/1e6:.1f}MB")
+```
+
+---
+<!-- auto-log 2026-05-18 06:11:26 edit -->
+### [Auto-Log] 2026-05-18 06:11:26 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+train_ds = FlowDatasetV4(train_sources, T_obs=T_obs, T_pred=T_pred)
+    val_ds   = FlowDatasetV4(val_sources,   T_obs=T_obs, T_pred=T_pred)
+```
+
+**After:**
+```python
+train_ds = FlowDatasetV4(train_sources, T_obs=T_obs, T_pred=T_pred,
+                             hover_only=args.hover_only)
+    val_ds   = FlowDatasetV4(val_sources,   T_obs=T_obs, T_pred=T_pred,
+                             hover_only=args.hover_only)
+```
+
+---
+<!-- auto-log 2026-05-18 06:11:33 edit -->
+### [Auto-Log] 2026-05-18 06:11:33 — Script Fix
+
+**File:** `scripts\train_flow_v4.py`
+
+**Before:**
+```python
+parser.add_argument('--hover-episodes', type=int, default=0,
+                        help='Max hover episodes to use (0 = all); use to cap RAM when mixing in recovery data')
+    args = parser.parse_args()
+```
+
+**After:**
+```python
+parser.add_argument('--hover-episodes', type=int, default=0,
+                        help='Max hover episodes to use (0 = all); use to cap RAM when mixing in recovery data')
+    parser.add_argument('--hover-only', action='store_true',
+                        help='Strict filter: skip any episode with init_tilt_deg attr '
+                             '(recovery data) or episode_type != "hover"')
+    args = parser.parse_args()
+```
+
+---
+<!-- auto-log 2026-05-18 07:07:11 write -->
+### [Auto-Log] 2026-05-18 07:07:11 — New File: Config / HP Change
+
+**File:** `configs\flow_policy_v5.yaml`
+
+**Content:**
+```yaml
+# Flow Matching Policy v5.0 Configuration
+# v5 = H4 + IMU->Vision Cross-Attention + State Prediction Auxiliary Loss
+# Goal: break the v4 distillation 100% crash ceiling by forcing the vision
+# encoder to learn physics (state aux) and letting IMU decide where to look
+# (cross-attention).
+
+vision:
+  image_size: 64
+  channels: 3
+  T_obs: 2                        # stacked frames: 2 * RGB = 6 channels input
+  feature_dim: 256                # pooled output dim (== H4); spatial map kept inside
+
+imu:
+  input_dim: 6                    # [gyro(3), specific_force_norm(3)]
+  hidden_dim: 1024
+  feature_dim: 512                # imu_feat dim (== H4)
+
+cross_attn:
+  n_heads: 8                      # IMU->vision multi-head attention
+
+state_predictor:
+  hidden_dim: 256                 # MLP(256 -> 256 -> 
+... [truncated — 2091 chars total]
+```
+
+---
+<!-- auto-log 2026-05-18 07:08:54 write -->
+### [Auto-Log] 2026-05-18 07:08:54 — New File: Script Fix
+
+**File:** `scripts\train_flow_v5.py`
+
+**Content:**
+```python
+"""
+Phase 3a v5.0: Flow Matching Policy Supervised Pre-training (cross-attn + state aux).
+
+Differences from train_flow_v4.py:
+  * Uses FlowMatchingPolicyV5 (IMU->Vision cross-attention, state predictor head)
+  * Dataset additionally returns normalised 15D state per sample
+  * compute_loss is called with (states_gt, lambda_state) so the vision encoder
+    is grounded on physics from the very start of training
+  * --transfer-from-h4 partial-loads the H4 BC checkpoint (conv / fc / imu /
+    flow_net / tilt_head); cross_attn and state_predictor stay random
+
+Usage:
+    dppo/Scripts/python.exe -m scripts.train_flow_v5 \
+        --config configs/flow_policy_v5.yaml \
+        --transfer-from-h4 checkpoints/flow_policy_v4/20260514_175219/best_model.pt \
+        --hover-only --hover-episodes 1000
+""
+... [truncated — 17716 chars total]
+```
+
+---
+<!-- auto-log 2026-05-18 07:10:18 write -->
+### [Auto-Log] 2026-05-18 07:10:18 — New File: Script Fix
+
+**File:** `scripts\train_distillation_v5.py`
+
+**Content:**
+```python
+"""
+Phase 3e v5.0: Online Policy Distillation with cross-attention + state aux loss.
+
+Differences from train_distillation_v4.py:
+  * Loads FlowMatchingPolicyV5 (cross-attn + state predictor)
+  * collect_rollout additionally stores normalised 15D state per step
+  * compute_loss is called with states_gt and lambda_state so the vision
+    encoder continues to be grounded on physics during distillation
+  * TensorBoard logs distillation/state_loss alongside flow + ts MSE
+
+Usage:
+    dppo/Scripts/python.exe -m scripts.train_distillation_v5 \
+        --pretrained checkpoints/flow_policy_v5/<bc_ts>/best_model.pt \
+        --flow-config configs/flow_policy_v5.yaml \
+        --rl-config   configs/distillation_v5.yaml
+"""
+
+import os
+import sys
+import argparse
+import yaml
+import numpy as np
+import tor
+... [truncated — 18176 chars total]
+```
+
+---
+<!-- auto-log 2026-05-18 07:10:59 edit -->
+### [Auto-Log] 2026-05-18 07:10:59 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+from models.flow_policy_v4 import FlowMatchingPolicyV4
+
+
+def detect_arch(ckpt_path: str) -> dict:
+    """Auto-detect architecture from checkpoint state_dict shapes."""
+    state = torch.load(ckpt_path, map_location='cpu')
+    w0 = state['imu_encoder.0.weight'].shape    # (hidden, 6)
+    w2 = state['imu_encoder.2.weight'].shape    # (feature_dim, hidden)
+    hidden_dim = w0[0]
+    feature_dim = w2[0]
+    has_tilt = 'tilt_head.weight' in state
+    # Era: Original (hidden=64, Mish, no tilt) / H3a (hidden=256, ReLU, tilt) / H4 (hidden=1024, ReLU, tilt)
+    if hidden_dim == 64:
+        era = 'Original'; activation = 'Mish'
+    elif hidden_dim == 256:
+        era = 'H3a'; activation = 'ReLU'
+    else:
+        era = 'H4'; activation = 'ReLU'
+    return {'imu_hidden': hidden_dim, 'imu_feature_dim'
+... [truncated — 886 chars total]
+```
+
+**After:**
+```python
+from models.flow_policy_v4 import FlowMatchingPolicyV4
+from models.flow_policy_v5 import FlowMatchingPolicyV5
+
+
+def detect_arch(ckpt_path: str) -> dict:
+    """Auto-detect architecture from checkpoint state_dict shapes."""
+    state = torch.load(ckpt_path, map_location='cpu')
+    w0 = state['imu_encoder.0.weight'].shape    # (hidden, 6)
+    w2 = state['imu_encoder.2.weight'].shape    # (feature_dim, hidden)
+    hidden_dim = w0[0]
+    feature_dim = w2[0]
+    has_tilt = 'tilt_head.weight' in state
+    # v5 = H4 + cross-attention + state predictor head
+    is_v5 = ('cross_attn.q_proj.weight' in state
+             and 'state_predictor.net.0.weight' in state)
+    if is_v5:
+        era = 'V5'; activation = 'ReLU'
+    elif hidden_dim == 64:
+        era = 'Original'; activation = 'Mish'
+    elif h
+... [truncated — 1078 chars total]
+```
+
+---
+<!-- auto-log 2026-05-18 07:11:12 edit -->
+### [Auto-Log] 2026-05-18 07:11:12 — Script Fix
+
+**File:** `scripts\evaluate_hierarchical.py`
+
+**Before:**
+```python
+# Auto-detect IMU arch
+    arch = detect_arch(ckpt_path)
+    imu_feature_dim = arch['imu_feature_dim']
+
+    policy = FlowMatchingPolicyV4(
+        vision_feature_dim=vis_cfg['feature_dim'],
+        imu_feature_dim=imu_feature_dim,
+        time_embed_dim=cfg['unet']['time_embed_dim'],
+        down_dims=tuple(cfg['unet']['down_dims']),
+        T_obs=vis_cfg['T_obs'],
+        T_pred=act_cfg['T_pred'],
+        action_dim=act_cfg['action_dim'],
+        n_inference_steps=n_inference_steps,
+        t_embed_scale=flow_cfg['t_embed_scale'],
+    ).to(device)
+    # Rebuild architecture-dependent layers to match checkpoint
+    rebuild_policy_for_arch(policy, arch, device)
+    # Load checkpoint, allowing strict=False for Original era (no tilt_head)
+    state = torch.load(ckpt_path, map_location=device)
+... [truncated — 870 chars total]
+```
+
+**After:**
+```python
+# Auto-detect IMU arch
+    arch = detect_arch(ckpt_path)
+    imu_feature_dim = arch['imu_feature_dim']
+
+    if arch['is_v5']:
+        # v5 has its own class with cross-attention + state predictor head.
+        policy = FlowMatchingPolicyV5(
+            vision_feature_dim=vis_cfg['feature_dim'],
+            imu_feature_dim=imu_feature_dim,
+            time_embed_dim=cfg['unet']['time_embed_dim'],
+            down_dims=tuple(cfg['unet']['down_dims']),
+            T_obs=vis_cfg['T_obs'],
+            T_pred=act_cfg['T_pred'],
+            action_dim=act_cfg['action_dim'],
+            n_inference_steps=n_inference_steps,
+            t_embed_scale=flow_cfg['t_embed_scale'],
+        ).to(device)
+    else:
+        policy = FlowMatchingPolicyV4(
+            vision_feature_dim=vis_cfg['feature_dim'],
+... [truncated — 1537 chars total]
+```
+
+---
+<!-- auto-log 2026-05-18 15:53:33 edit -->
+### [Auto-Log] 2026-05-18 15:53:33 — Script Fix
+
+**File:** `scripts\train_distillation_v5.py`
+
+**Before:**
+```python
+state_15d  = obs['state']
+            state_norm = obs_rms.normalize(state_15d).astype(np.float32)
+            a_teacher  = teacher.get_action_deterministic(state_norm)
+
+            rollout['image_stacks'].append(img_stack.copy())
+            rollout['imu_data'].append(imu_vec.copy())
+            rollout['states_norm'].append(state_norm.copy())
+```
+
+**After:**
+```python
+state_15d  = obs['state']
+            # Teacher always sees fully-normalised state (its own training space).
+            state_for_teacher = obs_rms.normalize(state_15d).astype(np.float32)
+            a_teacher  = teacher.get_action_deterministic(state_for_teacher)
+            # Aux target may use a different normalisation (Stage A fix).
+            state_aux  = _normalise_state(state_15d, obs_rms, state_target_norm)
+
+            rollout['image_stacks'].append(img_stack.copy())
+            rollout['imu_data'].append(imu_vec.copy())
+            rollout['states_norm'].append(state_aux.copy())
+```
+
+---
+<!-- auto-log 2026-05-18 15:53:50 edit -->
+### [Auto-Log] 2026-05-18 15:53:50 — Model Fix
+
+**File:** `models\flow_policy_v5.py`
+
+**Before:**
+```python
+def compute_loss(
+        self,
+        images: torch.Tensor,
+        imu: torch.Tensor,
+        actions: torch.Tensor,
+        states_gt: Optional[torch.Tensor] = None,
+        lambda_state: float = 0.1,
+        tilt_gt: Optional[torch.Tensor] = None,
+        lambda_tilt: float = 0.1,
+        return_components: bool = False,
+    ):
+```
+
+**After:**
+```python
+def compute_loss(
+        self,
+        images: torch.Tensor,
+        imu: torch.Tensor,
+        actions: torch.Tensor,
+        states_gt: Optional[torch.Tensor] = None,
+        lambda_state: float = 0.1,
+        tilt_gt: Optional[torch.Tensor] = None,
+        lambda_tilt: float = 0.1,
+        return_components: bool = False,
+        state_loss_type: str = 'mse',
+    ):
+```
+
+---
+<!-- auto-log 2026-05-18 15:54:00 edit -->
+### [Auto-Log] 2026-05-18 15:54:00 — Model Fix
+
+**File:** `models\flow_policy_v5.py`
+
+**Before:**
+```python
+if states_gt is not None:
+            state_pred = self.state_predictor(vis_pooled)
+            state_loss = F.mse_loss(state_pred, states_gt)
+            total = total + lambda_state * state_loss
+            components['state_loss'] = state_loss.detach()
+```
+
+**After:**
+```python
+if states_gt is not None:
+            state_pred = self.state_predictor(vis_pooled)
+            if state_loss_type == 'huber':
+                state_loss = F.smooth_l1_loss(state_pred, states_gt, beta=1.0)
+            elif state_loss_type == 'mse':
+                state_loss = F.mse_loss(state_pred, states_gt)
+            else:
+                raise ValueError(f"unknown state_loss_type: {state_loss_type}")
+            total = total + lambda_state * state_loss
+            components['state_loss'] = state_loss.detach()
+```
+
+---
+<!-- auto-log 2026-05-18 15:54:28 edit -->
+### [Auto-Log] 2026-05-18 15:54:28 — Script Fix
+
+**File:** `scripts\train_distillation_v5.py`
+
+**Before:**
+```python
+rollout = collect_rollout(
+            visual_env, base_env, policy, teacher, obs_rms,
+            n_steps=n_rollout,
+            T_obs=vis_cfg['T_obs'],
+            T_action=act_cfg['T_action'],
+            device=device,
+            sde_noise_std=sde_noise_std,
+        )
+```
+
+**After:**
+```python
+rollout = collect_rollout(
+            visual_env, base_env, policy, teacher, obs_rms,
+            n_steps=n_rollout,
+            T_obs=vis_cfg['T_obs'],
+            T_action=act_cfg['T_action'],
+            device=device,
+            sde_noise_std=sde_noise_std,
+            state_target_norm=state_target_norm,
+        )
+```
+
+---
+<!-- auto-log 2026-05-18 15:54:35 edit -->
+### [Auto-Log] 2026-05-18 15:54:35 — Script Fix
+
+**File:** `scripts\train_distillation_v5.py`
+
+**Before:**
+```python
+total_loss, comp = policy.compute_loss(
+                    imgs_gpu, imu_gpu, tgt_gpu,
+                    states_gt=state_gpu, lambda_state=lambda_state,
+                    return_components=True,
+                )
+```
+
+**After:**
+```python
+total_loss, comp = policy.compute_loss(
+                    imgs_gpu, imu_gpu, tgt_gpu,
+                    states_gt=state_gpu, lambda_state=lambda_state,
+                    state_loss_type=state_loss_type,
+                    return_components=True,
+                )
+```
+
+---
+<!-- auto-log 2026-05-19 00:24:19 edit -->
+### [Auto-Log] 2026-05-19 00:24:19 — Script Fix
+
+**File:** `scripts\pretrain_vision_oob.py`
+
+**Before:**
+```python
+trn_loader = DataLoader(trn_ds, batch_size=args.batch_size, shuffle=True,
+                            num_workers=4, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                            num_workers=4, pin_memory=True, persistent_workers=True)
+```
+
+**After:**
+```python
+# num_workers=0 on Windows: dataset is fully in-memory numpy arrays,
+    # spawn-based multiprocessing can't pickle large (5GB+) arrays through the pipe.
+    n_workers  = 0 if os.name == 'nt' else 4
+    pin_mem    = n_workers > 0
+    trn_loader = DataLoader(trn_ds, batch_size=args.batch_size, shuffle=True,
+                            num_workers=n_workers, pin_memory=pin_mem)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+                            num_workers=n_workers, pin_memory=pin_mem)
+```
+
+---
+<!-- auto-log 2026-05-19 05:35:26 edit -->
+### [Auto-Log] 2026-05-19 05:35:26 — Script Fix
+
+**File:** `scripts\train_distillation_v5.py`
+
+**Before:**
+```python
+if args.pretrained:
+        policy.load(args.pretrained)
+        print(f"Loaded pretrained v5 student: {args.pretrained}")
+    elif args.transfer_from_h4:
+        policy.transfer_from_h4(args.transfer_from_h4)
+        print(f"Transferred from H4: {args.transfer_from_h4}")
+
+    policy_opt = torch.optim.AdamW(policy.parameters(),
+                                   lr=distill_cfg['learning_rate'])
+```
+
+**After:**
+```python
+if args.pretrained:
+        policy.load(args.pretrained)
+        print(f"Loaded pretrained v5 student: {args.pretrained}")
+    elif args.transfer_from_h4:
+        policy.transfer_from_h4(args.transfer_from_h4)
+        print(f"Transferred from H4: {args.transfer_from_h4}")
+
+    # Stage C: optionally freeze vision_encoder to protect OOB pretrained weights.
+    freeze_vision = distill_cfg.get('freeze_vision_encoder', False)
+    if freeze_vision:
+        for p in policy.vision_encoder.parameters():
+            p.requires_grad = False
+        frozen_n = sum(p.numel() for p in policy.vision_encoder.parameters())
+        print(f"[Stage C] vision_encoder FROZEN ({frozen_n:,} params)")
+
+    policy_opt = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, policy.parameters()),
+        lr=di
+... [truncated — 832 chars total]
+```
+
+---
+<!-- auto-log 2026-05-19 05:35:31 edit -->
+### [Auto-Log] 2026-05-19 05:35:31 — Script Fix
+
+**File:** `scripts\train_distillation_v5.py`
+
+**Before:**
+```python
+print(f"State target norm: {state_target_norm} | state loss: {state_loss_type}")
+```
+
+**After:**
+```python
+print(f"State target norm: {state_target_norm} | state loss: {state_loss_type}")
+    print(f"Freeze vision_encoder: {freeze_vision} | lambda_state: {lambda_state}")
+```
+
+---
+<!-- auto-log 2026-05-19 11:30:50 edit -->
+### [Auto-Log] 2026-05-19 11:30:50 — Script Fix
+
+**File:** `scripts\train_flow_v5.py`
+
+**Before:**
+```python
+parser.add_argument('--transfer-from-h4', type=str, default=None,
+                        help='Partial-load weights from a v4 (H4) checkpoint')
+    parser.add_argument('--from-scratch', action='store_true',
+                        help='Skip H4 transfer; use random initialisation '
+                             '(for ablation comparison)')
+    args = parser.parse_args()
+```
+
+**After:**
+```python
+parser.add_argument('--transfer-from-h4', type=str, default=None,
+                        help='Partial-load weights from a v4 (H4) checkpoint')
+    parser.add_argument('--from-scratch', action='store_true',
+                        help='Skip H4 transfer; use random initialisation '
+                             '(for ablation comparison)')
+    parser.add_argument('--pretrained', type=str, default=None,
+                        help='Full checkpoint to load (e.g. OOB pretrain) before training')
+    parser.add_argument('--freeze-vision', action='store_true',
+                        help='Freeze vision_encoder weights; train only flow_net + cross_attn '
+                             '(Stage D: re-align action head to OOB-pretrained features)')
+    args = parser.parse_args()
+```

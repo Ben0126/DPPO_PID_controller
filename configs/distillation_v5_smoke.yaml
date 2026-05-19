@@ -1,0 +1,35 @@
+# Smoke-test config for train_distillation_v5.py — 2 updates, tiny rollout.
+
+distillation:
+  learning_rate: 1.0e-5
+  n_rollout_steps: 512
+  n_epochs: 1
+  mini_batch: 128
+  grad_clip: 1.0
+  total_updates: 2
+  sde_noise_std: 0.05
+  lambda_state: 0.1
+
+teacher:
+  model_path:    checkpoints/ppo_expert_v4/20260419_142245/best_model.pt
+  obs_rms_path:  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz
+  hidden_dim:    256
+
+curriculum:
+  enabled: true
+  n_hover_updates: 1
+  n_ramp_updates:  1
+  pos_start: 0.1
+  pos_end:   0.5
+  vel_start: 0.3
+  vel_end:   0.5
+  hover_anchor_prob:       0.0
+  swift_perturbation_prob: 0.1
+  swift_perturb_tilt_deg:  15.0
+  swift_perturb_vel:       1.0
+  swift_max_tilt_deg:      80.0
+
+logging:
+  tensorboard_log: "./logs/distillation_v5_smoke/"
+  save_path:       "./checkpoints/distillation_v5_smoke/"
+  save_freq:       100

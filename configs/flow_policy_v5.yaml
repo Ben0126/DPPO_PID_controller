@@ -1,0 +1,64 @@
+# Flow Matching Policy v5.0 Configuration
+# v5 = H4 + IMU->Vision Cross-Attention + State Prediction Auxiliary Loss
+# Goal: break the v4 distillation 100% crash ceiling by forcing the vision
+# encoder to learn physics (state aux) and letting IMU decide where to look
+# (cross-attention).
+
+vision:
+  image_size: 64
+  channels: 3
+  T_obs: 2                        # stacked frames: 2 * RGB = 6 channels input
+  feature_dim: 256                # pooled output dim (== H4); spatial map kept inside
+
+imu:
+  input_dim: 6                    # [gyro(3), specific_force_norm(3)]
+  hidden_dim: 1024
+  feature_dim: 512                # imu_feat dim (== H4)
+
+cross_attn:
+  n_heads: 8                      # IMU->vision multi-head attention
+
+state_predictor:
+  hidden_dim: 256                 # MLP(256 -> 256 -> 15)
+  state_dim: 15                   # normalised 15D state from PPO obs_rms
+  lambda_state: 0.1               # default auxiliary loss weight (BC + distillation)
+
+unet:
+  down_dims: [256, 512]
+  kernel_size: 5
+  n_groups: 8
+  time_embed_dim: 128
+  # cond_dim = global_cond(768) + time_embed(128) = 896  (identical to H4)
+
+action:
+  T_pred: 8
+  T_action: 1                     # closed-loop @ 50Hz, phase lag 28ms
+  action_dim: 4
+
+flow:
+  n_inference_steps: 1
+  t_embed_scale: 999
+
+training:
+  batch_size: 256
+  learning_rate: 0.0001           # AdamW
+  weight_decay: 0.01
+  num_epochs: 80                  # transfer-warm-started -> shorter than H4 (500 ep)
+  lr_scheduler: "cosine"
+  warmup_epochs: 5
+  grad_clip: 1.0
+  lambda_state: 0.1               # BC-stage state aux weight (matches state_predictor.lambda_state)
+  lambda_tilt: 0.2                # retain H4 tilt aux
+  dataset_path: "data/expert_demos_v4.h5"
+  val_split: 0.05
+  num_workers: 0
+
+teacher_obs_rms:
+  # Reused for normalising 15D states in BC dataset so the predictor sees the
+  # same distribution as during distillation.
+  path: "checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz"
+
+logging:
+  tensorboard_log: "./logs/flow_policy_v5/"
+  save_path:       "./checkpoints/flow_policy_v5/"
+  save_freq:       20

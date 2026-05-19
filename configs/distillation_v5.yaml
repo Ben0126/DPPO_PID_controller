@@ -1,0 +1,50 @@
+# Online Policy Distillation v5.0 — Cross-Attention + State Aux
+# Student rolls out on-policy (DAgger-style); teacher (state-based PPO) labels
+# every step with the "correct" 4D CTBR action; 8-step sliding window builds
+# the target sequence; flow matching loss + state aux loss.
+
+distillation:
+  learning_rate: 1.0e-5             # conservative — protect v5 BC weights
+  n_rollout_steps: 4096
+  n_epochs: 3
+  mini_batch: 256
+  grad_clip: 1.0
+  total_updates: 200
+  sde_noise_std: 0.05               # student exploration for DAgger state coverage
+
+  # Stage A normalization fix (2026-05-18, Run 3+):
+  #   'partial' : pos/vel/omega via obs_rms, rot6D[3:9] kept raw (already in [-1,1])
+  #   'full'    : original obs_rms.normalize over all 15D (legacy behaviour)
+  #   'raw'     : no normalisation at all
+  state_target_norm: 'partial'
+  state_loss_type:   'mse'          # 'mse' | 'huber'  (huber δ=1.0 if selected)
+
+  # Stage C (2026-05-19): freeze vision_encoder + disable state_loss.
+  # Run 4 confirmed λ_state=1.0 oscillation erodes OOB pretrained knowledge.
+  # Pure DAgger flow matching only — flow_net + cross_attn update, encoder frozen.
+  lambda_state: 0.0
+  freeze_vision_encoder: true
+
+teacher:
+  model_path:    checkpoints/ppo_expert_v4/20260419_142245/best_model.pt
+  obs_rms_path:  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz
+  hidden_dim:    256
+
+curriculum:
+  enabled: true
+  n_hover_updates: 30
+  n_ramp_updates:  50
+  pos_start: 0.1
+  pos_end:   2.0
+  vel_start: 0.3
+  vel_end:   2.0
+  hover_anchor_prob:       0.0
+  swift_perturbation_prob: 0.2
+  swift_perturb_tilt_deg:  25.0
+  swift_perturb_vel:       1.0
+  swift_max_tilt_deg:      80.0
+
+logging:
+  tensorboard_log: "./logs/distillation_v5/"
+  save_path:       "./checkpoints/distillation_v5/"
+  save_freq:       20

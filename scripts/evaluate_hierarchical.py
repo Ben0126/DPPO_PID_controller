@@ -29,6 +29,7 @@ if ROOT not in sys.path:
 from envs.quadrotor_env_v4 import QuadrotorEnvV4
 from envs.quadrotor_visual_env import QuadrotorVisualEnv
 from models.flow_policy_v4 import FlowMatchingPolicyV4
+from models.flow_policy_v5 import FlowMatchingPolicyV5
 
 
 def detect_arch(ckpt_path: str) -> dict:
@@ -39,15 +40,20 @@ def detect_arch(ckpt_path: str) -> dict:
     hidden_dim = w0[0]
     feature_dim = w2[0]
     has_tilt = 'tilt_head.weight' in state
-    # Era: Original (hidden=64, Mish, no tilt) / H3a (hidden=256, ReLU, tilt) / H4 (hidden=1024, ReLU, tilt)
-    if hidden_dim == 64:
+    # v5 = H4 + cross-attention + state predictor head
+    is_v5 = ('cross_attn.q_proj.weight' in state
+             and 'state_predictor.net.0.weight' in state)
+    if is_v5:
+        era = 'V5'; activation = 'ReLU'
+    elif hidden_dim == 64:
         era = 'Original'; activation = 'Mish'
     elif hidden_dim == 256:
         era = 'H3a'; activation = 'ReLU'
     else:
         era = 'H4'; activation = 'ReLU'
     return {'imu_hidden': hidden_dim, 'imu_feature_dim': feature_dim,
-            'has_tilt': has_tilt, 'era': era, 'activation': activation}
+            'has_tilt': has_tilt, 'era': era, 'activation': activation,
+            'is_v5': is_v5}
 
 
 def rebuild_policy_for_arch(policy, arch, device):
@@ -168,19 +174,33 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
     arch = detect_arch(ckpt_path)
     imu_feature_dim = arch['imu_feature_dim']
 
-    policy = FlowMatchingPolicyV4(
-        vision_feature_dim=vis_cfg['feature_dim'],
-        imu_feature_dim=imu_feature_dim,
-        time_embed_dim=cfg['unet']['time_embed_dim'],
-        down_dims=tuple(cfg['unet']['down_dims']),
-        T_obs=vis_cfg['T_obs'],
-        T_pred=act_cfg['T_pred'],
-        action_dim=act_cfg['action_dim'],
-        n_inference_steps=n_inference_steps,
-        t_embed_scale=flow_cfg['t_embed_scale'],
-    ).to(device)
-    # Rebuild architecture-dependent layers to match checkpoint
-    rebuild_policy_for_arch(policy, arch, device)
+    if arch['is_v5']:
+        # v5 has its own class with cross-attention + state predictor head.
+        policy = FlowMatchingPolicyV5(
+            vision_feature_dim=vis_cfg['feature_dim'],
+            imu_feature_dim=imu_feature_dim,
+            time_embed_dim=cfg['unet']['time_embed_dim'],
+            down_dims=tuple(cfg['unet']['down_dims']),
+            T_obs=vis_cfg['T_obs'],
+            T_pred=act_cfg['T_pred'],
+            action_dim=act_cfg['action_dim'],
+            n_inference_steps=n_inference_steps,
+            t_embed_scale=flow_cfg['t_embed_scale'],
+        ).to(device)
+    else:
+        policy = FlowMatchingPolicyV4(
+            vision_feature_dim=vis_cfg['feature_dim'],
+            imu_feature_dim=imu_feature_dim,
+            time_embed_dim=cfg['unet']['time_embed_dim'],
+            down_dims=tuple(cfg['unet']['down_dims']),
+            T_obs=vis_cfg['T_obs'],
+            T_pred=act_cfg['T_pred'],
+            action_dim=act_cfg['action_dim'],
+            n_inference_steps=n_inference_steps,
+            t_embed_scale=flow_cfg['t_embed_scale'],
+        ).to(device)
+        # Rebuild architecture-dependent layers to match v4 checkpoint variants
+        rebuild_policy_for_arch(policy, arch, device)
     # Load checkpoint, allowing strict=False for Original era (no tilt_head)
     state = torch.load(ckpt_path, map_location=device)
     missing, unexpected = policy.load_state_dict(state, strict=False)

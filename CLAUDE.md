@@ -18,9 +18,10 @@ is fine-tuned with D²PPO (Dispersive PPO) advantage-weighted RL to overcome cov
 | v4.0 Ph.1 | CTBR PPO Expert | Done — RMSE 0.0649m, 0/50 crashes (`20260419_142245`) |
 | v4.0 Ph.2 | FPV Data Collection v4.0 | Done — `data/expert_demos_v4.h5` (1000 ep, 3.9GB, 0 crashes) |
 | v4.0 Ph.3a | Flow Matching supervised pre-training | Done — best val=0.0630 (`flow_policy_v4/20260420_034314`) |
-| **v4.0 Ph.3b** | **ReinFlow RL Fine-tuning** | **27 runs through 2026-05-17. H4 BC (IMU-dominant fusion, score 0.165) is v4.0 SOTA. All RL runs systematically destroy BC. Run 28 (positive-advantage mask) in progress.** |
-| ~~v4.0 Ph.3c~~ | ~~DAgger Recovery~~ | DENIED (2026-05-12): recovery data poisons hover BC (49/50 crash, RMSE 2.44m). |
-| **v4.0 Ph.3d** | **H4 Architecture + Hierarchical Metric** | Done — H4 IMU encoder (feature_dim 512, V/I grad ratio 3.22×); new 飛→穩→準 eval metric; RMSE bias and AWR mode-collapse identified |
+| ~~v4.0 Ph.3b~~ | ~~ReinFlow RL Fine-tuning~~ | Done (concluded) — 27 runs all fail (AWR mode-collapse). H4 BC = SOTA. |
+| ~~v4.0 Ph.3c~~ | ~~DAgger Recovery~~ | DENIED (2026-05-12): recovery data poisons hover BC. |
+| **v4.0 Ph.3d** | **H4 Architecture + Hierarchical Metric** | Done — H4 IMU 512D, V/I ratio 3.22×, new 飛→穩→準 metric. |
+| ~~v5 pipeline~~ | ~~Cross-Attn + State Aux + DAgger + OOB Pretrain~~ | **CONCLUDED (2026-05-19)** — Stages A→D all fail. H4 BC confirmed v4.0 SOTA. Encoder-action alignment structurally unsolvable via separate pretraining. |
 | v4.0 Ph.4 | Hardware deployment (Jetson Orin Nano) | Future |
 | v3.3 ref | DPPO v3.3 best result | Done — Run 1: RMSE 0.1039m, 50/50 crashes |
 
@@ -342,26 +343,25 @@ curriculum:
 
 | Rank | Checkpoint | Score | Survive | IAE_steady | Term err | Steps avg |
 |------|-----------|-------|---------|------------|----------|-----------|
-| 1 | **H4 BC** (current SOTA) | **0.165** | 44.0% | 1.473m | 2.510m | **202** |
-| 2 | Run25_u50 (BC + warmup) | 0.158 | 43.2% | 1.650m | 3.022m | 197 |
+| 1 | **H4 BC** (v4.0 SOTA, confirmed) | **0.167–0.171** | ~40% | ~1.45m | ~2.6m | **202** |
+| 2 | v5 OOB pretrain | 0.140 | 51.5% | 1.407m | 2.441m | — |
 | 3 | H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 197 |
-| 4 | Run25_u200 | 0.128 | 26.6% | 0.976m | 1.694m | 121 |
-| 5 | Run23_RL | 0.093 | 18.6% | 0.770m | 1.272m | 86 |
-| 6 | Run25_best | 0.086 | 17.1% | 0.713m | 1.119m | 79 |
-| 7 | Run19_RL (old "best") | 0.078 | 15.6% | 0.710m | 1.113m | 71 |
+| 4 | v5 Stage D best | 0.073 | 55.2% | 2.259m | 3.852m | — |
+| 5 | Run23_RL (best RL) | 0.093 | 18.6% | 0.770m | 1.272m | 86 |
 | ref | PPO Expert (state-based) | ~0.85 | 100% | 0.065m | 0.065m | 500 |
 
-**v4.0 current SOTA:** **H4 BC** (score 0.165, 202 steps avg, no RL fine-tuning).
+**v4.0 FINAL SOTA:** **H4 BC** (score 0.167–0.171, 202 steps avg). Confirmed 2026-05-19 after v5 pipeline A→D all failed.
 **Inference:** 14ms with n_steps=2 (recommended; 1-step is suboptimal post-RL).
 **Latency target:** ✓ met (still under 20ms @ 50Hz control period).
 
-### Five Major Findings (2026-05-13~17)
+### Six Major Findings (2026-05-13~19)
 
 1. **RMSE bias confirmed.** `evaluate_rhc_v4.py:92` divides by `ep_length` not `max_episode_steps` → short-lived policies get artificially low RMSE. Past 24 runs misranked.
 2. **Disturbance not crash cause.** Eval with disturbance OFF: same ~73 step crash. Run 24 hypothesis denied.
 3. **Phase lag secondary.** T_action 4→1: +13%. n_inference_steps 1→3: +35%. Total +53% steps, still 50/50.
 4. **H4 IMU dominance = real v4.0 SOTA.** feature_dim 128→512, grad ratio 9.9→3.22, BC steps 130→202 (+55%).
-5. **AWR mode-collapse.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate own crash trajectories. All RL runs degrade systematically. Fix in test: positive-advantage mask (Run 28).
+5. **AWR mode-collapse.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate own crash trajectories. All 27 RL runs degrade systematically.
+6. **Encoder-action alignment unsolvable via separate pretraining (v5 pipeline).** OOB encoder optimizes state-regression features ≠ action-generation optimal features. DAgger with 100% crash rollouts is structurally broken. H4 BC ceiling = 0.171. Next: E2E joint training or RL on H4 BC with AWR fix.
 
 See `docs/dev_log_v4_h4_hierarchical.md` for full diagnostic chain.
 

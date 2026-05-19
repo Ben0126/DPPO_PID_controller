@@ -1,0 +1,41 @@
+# Online Policy Distillation v4.0 Configuration
+# Phase 3e: Replace AWR with teacher distillation from state-based PPO Expert.
+# Student rolls out (DAgger-style on-policy state distribution);
+# at every step query PPO Teacher for the "correct" 4D CTBR action;
+# build sliding-window (4, T_pred=8) target sequence and train via standard
+# flow matching loss (no scalar reward, no critic).
+# Pretrained: H4 BC checkpoints/flow_policy_v4/20260514_175219/best_model.pt
+
+distillation:
+  learning_rate: 1.0e-5             # conservative — protect H4 BC backbone
+  n_rollout_steps: 4096
+  n_epochs: 3
+  mini_batch: 256
+  grad_clip: 1.0
+  total_updates: 200
+  sde_noise_std: 0.05               # student exploration: DAgger needs student state dist
+
+teacher:
+  model_path:    checkpoints/ppo_expert_v4/20260419_142245/best_model.pt
+  obs_rms_path:  checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz
+  hidden_dim:    256
+
+curriculum:
+  enabled: true
+  # Run 28 inheritance: hover-first, then progressive OOD via swift perturbation.
+  n_hover_updates: 30               # short hover warmup (no critic gate needed)
+  n_ramp_updates:  50
+  pos_start: 0.1
+  pos_end:   2.0
+  vel_start: 0.3
+  vel_end:   2.0
+  hover_anchor_prob:       0.0
+  swift_perturbation_prob: 0.2      # 20% episode start from tilted state (recovery scenes)
+  swift_perturb_tilt_deg:  25.0
+  swift_perturb_vel:       1.0
+  swift_max_tilt_deg:      80.0
+
+logging:
+  tensorboard_log: "./logs/distillation_v4/"
+  save_path:       "./checkpoints/distillation_v4/"
+  save_freq:       20

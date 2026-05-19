@@ -1,9 +1,9 @@
 # Vision-DPPO Research Plan: End-to-End Drone Control via Diffusion Policy
 # 基於視覺與擴散策略的無人機端到端控制研究計劃
 
-**Version:** 4.0
-**Date:** 2026-05-17
-**Status:** v4.0 Phase 3b ReinFlow — 27 runs complete. **H4 architecture (IMU-dominant fusion) + new hierarchical evaluation metric** has reset the v4.0 state-of-art. H4 BC alone gives steps_avg=202 (+55% vs H3a), hierarchical score 0.165 — outperforms ALL prior RL-fine-tuned checkpoints. Five major findings (RMSE bias, disturbance not crash cause, phase lag secondary, AWR mode-collapse, OT 1-step suboptimal) recorded in [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md). Run 28 testing positive-advantage mask fix for AWR.
+**Version:** 5.0
+**Date:** 2026-05-18
+**Status:** v5 Architecture (Cross-Attention IMU→Vision + State Prediction Aux Loss) — BC pre-training complete (val/flow=0.06273); two DAgger-style distillation runs failed (100% crash, gradient conflict confirmed). **Current SOTA remains H4 BC (hierarchical score 0.165)**. Root cause of vision-only failures is information asymmetry + hover-only OOD gap. Next direction TBD. Full history: [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md).
 **Target Venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -641,6 +641,55 @@ ROS 2 node must subscribe to `/fmu/out/vehicle_imu` and align IMU readings to th
 - **RHC eval (--ddim-steps 1):** inference **9.9ms** ✓ (<16ms), RMSE **0.2713m**, 50/50 crashes
 - **Root cause of quality gap:** ε-space trains for all t∈[0,99] uniformly; student's t=99 ε-prediction not specifically optimised; 1-step inference accumulates larger per-step error than 10-step DDIM despite low average distillation loss
 - **Inference target achieved** (9.9ms < 16ms); **quality target not achieved** (RMSE 0.271m > 0.104m)
+
+**v4.0 H4 (2026-05-15 — IMU-dominant fusion, current v4.0 SOTA):**
+- IMU encoder enlarged: Linear(6→1024→512) → 512D imu_feat（v4 原本只有 128D）
+- `global_cond = cat([vision(256), imu(512)]) = 768D`（IMU 佔 67%）
+- V/I gradient ratio: 46.8× (Original) → 9.9× (H3a) → 3.22× (H4)
+- BC alone: 130 steps (H3a) → 202 steps (H4)，**+55%**，無任何 RL
+- Hierarchical score: **0.165**（v4.0 ceiling，超越全部 27 個 RL runs）
+- Checkpoint: `checkpoints/flow_policy_v4/20260514_175219/best_model.pt`
+
+**v5.0 (Phase 3e — 2026-05-18, Cross-Attention + State Prediction Aux):**
+
+兩項架構升級，刻意保持 `global_cond=768D` 與 H4 相同 → H4 flow_net 權重可 1:1 transfer。
+
+- **Cross-Attention IMU→Vision:**
+  - VisionEncoderV5 暴露 spatial_map (B,256,4,4)，不再只回傳 pooled 256D
+  - Q = Linear(imu_feat, 256), K=V = spatial_map.flatten → 16 tokens
+  - MultiheadAttention → attended (B, 256) 取代原本的 pooled vision
+  - 設計動機：IMU 決定「看哪裡」，解決 vision encoder 因 IMU dominance 而被擺爛 (causal confusion)
+- **State Prediction Auxiliary Loss:**
+  - StatePredictor MLP(256→256→15) 接 `vis_pooled` （**不接 IMU/attended**）
+  - `L = L_flow + λ_state × MSE(state_pred, state_15d_normalized)`
+  - 設計動機：梯度純粹施壓 vision encoder 學會從畫面推測物理量
+  - State target 經 PPO `obs_rms` normalize 後再做 MSE（與 teacher 輸入空間一致）
+- **新檔案：** `models/vision_encoder_v5.py`, `models/flow_policy_v5.py`, `configs/flow_policy_v5.yaml`, `configs/distillation_v5.yaml`, `scripts/train_flow_v5.py`, `scripts/train_distillation_v5.py`
+- **H4→v5 weight transfer：** 94 tensors 成功（vision_encoder.encoder.*, vision_encoder.fc.*, imu_encoder.*, flow_net.*, tilt_head.*）；cross_attn / state_predictor 隨機初始化
+
+**v5 結果（2026-05-18）：**
+- **BC 預訓練：** `checkpoints/flow_policy_v5/20260518_072501/best_model.pt`
+  - Best val/flow_loss **0.06273 @ epoch 22**（與 H4 BC 相當）
+  - hover-only 1000 episodes，80 epochs，state_aux loss + tilt_aux loss 同時啟用
+- **Distillation Run 1（λ_state=0.1，killed @ u66/200）：**
+  - flow_loss：0.32 → 0.29 收斂良好
+  - state_loss：振盪 0.24–5.46，update 66 avg = 3.94 **發散**
+  - teacher_student_action_mse：0.30 → 0.13 收斂
+  - crash_rate：**100%** 全程
+  - 診斷：λ_state 太小，rot6D 維度 std≈0.04，25° OOD tilt 造成 ±5σ normalized 值，state_loss 結構性爆炸
+- **Distillation Run 2（λ_state=1.0，killed @ u20/200）：**
+  - state_loss：1.336 (u1–5 avg) → 1.913 (u20 avg) 持續上升
+  - flow_loss：受 state_loss 干擾，振盪
+  - crash_rate：**100%** 全程
+  - 診斷：**gradient conflict 確診**——flow_loss 與 state_loss 都 backprop 過 vis_pooled→vision_encoder，方向對抗；加上 BC 從未見過 swift perturbation 的 OOD 影像 → state prediction 本質上不可學
+- **根因摘要：** 三重結構限制
+  1. hover-only BC 沒有 OOD 影像分布覆蓋
+  2. flow_loss / state_loss 共享 vision encoder，梯度方向衝突
+  3. rot6D normalized 空間下，傾角 OOD 自動成 ±5σ outlier
+- **後續候選方向：**
+  - A. 收集 OOD 影像（swift perturbation）重訓 BC，再做蒸餾
+  - B. v5 BC + RL（positive-advantage mask，沿用 Run 28 思路）
+  - C. 放大 vision encoder（feature_dim 256→512）並 freeze flow_net 蒸餾 vision-only
 
 **Long-term (Phase 5):**
 - Encoder: CNN → Pretrained ViT-Small + privileged state decoder head

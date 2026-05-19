@@ -105,6 +105,53 @@ V/I gradient ratio: 46.8× (Original) → 9.9× (H3a) → 3.22× (H4)
 BC alone: 130 steps (H3a) → 202 steps (H4), +55%
 ```
 
+### Architecture v5 (2026-05-18 — Cross-Attention IMU→Vision + State Prediction Aux Loss)
+
+```
+┌──────────────────────────────┐  ┌──────────────────────────────┐
+│  FPV Image Stack (B,6,64,64) │  │  6D IMU [ωx,ωy,ωz, ax,ay,az] │
+└──────────────┬───────────────┘  └──────────────┬───────────────┘
+               ↓                                 ↓
+┌──────────────────────────┐     ┌───────────────────────────────┐
+│  VisionEncoderV5 (CNN)   │     │  IMU Encoder MLP              │
+│  → spatial_map(B,256,4,4)│     │  Linear(6→1024→512)           │
+│  → pooled (B,256D)       │     │  → 512D imu_feat              │
+└──┬───────────────────────┘     └──────────────┬────────────────┘
+   │ pooled                                      │ imu_feat
+   │                      ┌──────────────────────┘
+   │           CrossAttentionIMU2Vision:
+   │           Q = Linear(imu_feat, 256)
+   │           K = V = spatial_map → 16 tokens
+   │           → attended (B, 256)
+   │                      │
+   │    cat([attended(256), imu_feat(512)])
+   │                      ↓ 768D global_cond (= H4，flow_net 直接 transfer)
+   │              + timestep_embed(128D)
+   │                      ↓ 896D cond → Conditional 1D U-Net → v_θ
+   │
+   │ [Training only — State Prediction Auxiliary Loss]
+   └→ StatePredictor MLP(256→256→15)
+      → state_pred (B,15)
+      L = L_flow + λ_state × MSE(state_pred, state_15d_normalized)
+
+Key design: global_cond 維度刻意保持 768D → H4 flow_net 權重 1:1 transfer
+            state_predictor 僅接 vis_pooled（非 attended）→ 梯度純粹施壓 vision encoder 學物理
+```
+
+**v5 BC 預訓練結果（2026-05-18）：**
+- Checkpoint: `checkpoints/flow_policy_v5/20260518_072501/best_model.pt`
+- Best val/flow_loss = **0.06273** @ epoch 22（與 H4 BC 相當）
+- H4 → v5 transfer: 94 tensors 成功，`cross_attn`/`state_predictor` 隨機初始化
+
+**v5 Distillation 結果（2026-05-18）：**
+
+| Run | lambda_state | Updates | state_loss | crash_rate | 結果 |
+|-----|-------------|---------|------------|-----------|------|
+| Run 1 | 0.1 | 66/200 (killed) | 0.24–5.46（振盪） | 100% | **FAILED** |
+| Run 2 | 1.0 | 20/200 (killed) | 1.913（上升） | 100% | **FAILED** |
+
+**根因：** (1) BC 只在 hover-only 資料訓練，swift perturbation 的 OOD tilted 影像 vision encoder 從未見過；(2) flow_loss 與 state_loss 透過 vis_pooled 共享 vision encoder，梯度方向相反 → gradient conflict；(3) rot6D std≈0.04 使 25° 傾角 = ±5σ normalized → state_loss 結構性爆炸。
+
 ### Architecture v3.1 / v3.2 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth) [Historical]
 
 ```
@@ -212,32 +259,49 @@ Phase 3: Flow Matching Policy (replaces DDPM)
               Run 1–7: engineering fixes (VLoss gate, BC reg, one-way latch) → RMSE stuck 0.51m
               Run 8–9: OOD disturbance env attempts → gate never opened / no improvement
               Run 10: Curriculum (hover → ramp 0.1→2.0m, 600 upd, λ_bc=0.1)
-                      final ckpt: RMSE 0.3005m 50/50, ~36 steps avg ← BEST EVAL RESULT (−42%)
-              Run 11: Curriculum v2 → ramp to 3.0m: RMSE 0.1418m artefact, instant crash at init
-              Run 12: Anchored Curriculum (hover_anchor=20%, crash_penalty_rl=1.0, pos_end=2.0m)
-                      best ckpt: train reward 0.8270; final ckpt RMSE 0.2975m — soft penalty mismatch
-              Runs 13–16: crash_penalty=10 restored, varied BC demos → RMSE stuck 0.51m (lambda_bc=0.1 lock)
-              Runs 17–18: w_action hover-ref, sigma_pos=0.30, lambda_bc=0.01 → VLoss spike 30+, collapse
-                          (LR=5e-7 too high: policy changes too fast → value targets jump)
-              Run 19 (LR=1e-7): VLoss spike solved; peaked 0.6948@u200; eval RMSE 0.5232m 50/50
-                      Training reward improved (0.529→0.695) but eval gap persists — crash at ~60 steps
-              Run 20 (early ramp n_hover=100, n_ramp=400, pos_end=1.5m): same ceiling 0.6948@u200
-              Diagnosis: training-eval gap confirmed. RL improves hover reward in-distribution
-                         but does not reduce crash rate. Crash at step 60 = same as BC baseline.
+                      final ckpt: RMSE 0.3005m 50/50, ~36 steps avg ← old "best" (RMSE-biased)
+              Run 12: Anchored Curriculum → best train reward 0.8270; RMSE 0.2975m; crash 50/50
+              Runs 13–20: LR sweep, reward variants → training reward ceiling 0.6948 but eval gap persists
+              Diagnosis: training-eval gap confirmed. Crash at step 60 = same as BC baseline.
+         [✓]  3d: H3a→H4 IMU-dominant fusion (Runs 23–28, 2026-05-14 ~ 2026-05-17)
+              H4 BC: 202 steps avg (SOTA); all RL runs degrade (AWR mode-collapse confirmed)
+              Run 28 positive-advantage mask: interrupted, result pending
+
+─────────── v5.0 Information Asymmetry Fix (2026-05-18) ───────────
+
+Root cause of 100% crash: Vision-only student cannot infer physics from hover-distribution images
+→ v5 adds two architectural upgrades to bridge the information gap
+
+Phase 3e: v5 Architecture — Cross-Attention + State Prediction Aux
+         [✓]  v5 BC pre-training — DONE
+              Checkpoint: checkpoints/flow_policy_v5/20260518_072501/best_model.pt
+              Best val/flow_loss = 0.06273 @ epoch 22 (80 epochs total)
+              H4→v5 transfer: 94 tensors (cross_attn / state_predictor randomly init)
+         [✗]  v5 Distillation Run 1 (lambda_state=0.1) — FAILED (killed @ 66/200)
+              state_loss oscillated 0.24–5.46, crash_rate 100%, flow_loss ok (0.32→0.29)
+              Root cause: lambda_state too small; rot6D std≈0.04 → OOD tilt = ±5σ state error
+         [✗]  v5 Distillation Run 2 (lambda_state=1.0) — FAILED (killed @ 20/200)
+              state_loss still growing (avg 1.913 vs 1.336 at start), crash_rate 100%
+              Root cause confirmed: gradient conflict (flow_loss ↔ state_loss share vis_pooled)
+                                    + hover-only BC has no OOD image coverage
 
 Phase 4: Hardware Deployment
-         [ ]  ReinFlow 1-step inference (<16ms target)
+         [ ]  1-step inference (<16ms target)
          [ ]  Jetson Orin Nano + TensorRT
 ```
 
-**Current status (v4.0 — 2026-05-17):**
+**Current status (v5 — 2026-05-18):**
 
-**Major findings since 2026-05-13:**
+**v5 Cross-Attention + State Aux 架構（2026-05-18）：**
+
+v5 BC 預訓練完成（best val=0.06273 @ epoch 22），兩次蒸餾訓練均以 100% crash rate 失敗。根因確診：hover-only BC 缺乏 OOD 覆蓋，flow_loss 與 state_loss 的梯度衝突（gradient conflict），以及 rot6D normalized 空間下的結構性 state_loss 爆炸（±5σ）。下一步待定（OOD 資料收集、RL 正向 advantage mask 或更大 vision encoder）。
+
+**Major findings (v4.0 — 2026-05-13 ~ 2026-05-17):**
 1. **RMSE was misleading the entire v4.0 effort.** It is biased toward short-lived policies (smaller integration window). Past "best" Run 10 (RMSE 0.30m) only survived 36 steps; new evaluation reveals it ranks WORST.
 2. **H4 IMU-dominant fusion = real v4.0 SOTA.** Enlarged IMU encoder to feature_dim=512 (grad ratio 46.8× → 9.9× → **3.22×**). BC alone gives 202 steps avg (vs H3a BC 130, **+55%**) without any RL.
 3. **Disturbance is NOT the crash cause.** Disabling it in eval changed nothing.
 4. **Phase lag (RHC) is secondary.** T_action=4→1 only +13% steps.
-5. **AWR mode-collapse confirmed.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate its own crash trajectories. All 27 RL runs systematically destroyed BC. Run 28 (positive-advantage mask) in progress.
+5. **AWR mode-collapse confirmed.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate its own crash trajectories. All RL runs systematically destroyed BC.
 
 **New evaluation framework (飛→穩→準 hierarchy):**
 - Tier 1: `survival_rate = ep_length / max_episode_steps` (gate ≥ 50%)
@@ -455,8 +519,10 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 | Checkpoint | Score | Survive | IAE_steady | Terminal | 詮釋 |
 |-----------|-------|---------|------------|----------|------|
 | **H4 BC**（v4.0 SOTA） | **0.165** | **44.0%** | 1.473m | 2.510m | 純 BC，無 RL |
+| v5 BC（2026-05-18） | *未評估* | — | — | — | val/flow=0.0627，hover-only |
 | Run25_u50 (H4 BC + warmup) | 0.158 | 43.2% | 1.650m | 3.022m | 接近 BC |
 | H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 上一代架構 |
+| v5 Distill Run1/Run2 | ~0.0 | ~0% | — | — | crash_rate 100%，蒸餾失敗 |
 | Run19_RL（舊 RMSE 排名第一）| 0.078 | 15.6% | 0.710m | 1.113m | **死得最快的精準 hover** |
 | PPO Expert（理論上限） | ~0.85 | 100% | 0.065m | 0.065m | state-based oracle |
 
