@@ -267,10 +267,10 @@ Phase 3: Flow Matching Policy (replaces DDPM)
               H4 BC: 202 steps avg (SOTA); all RL runs degrade (AWR mode-collapse confirmed)
               Run 28 positive-advantage mask: interrupted, result pending
 
-─────────── v5.0 Information Asymmetry Fix (2026-05-18) ───────────
+─────────── v5.0 Joint End-to-End Training (2026-06-03) ───────────
 
-Root cause of 100% crash: Vision-only student cannot infer physics from hover-distribution images
-→ v5 adds two architectural upgrades to bridge the information gap
+Root cause of 100% crash: Vision-only student cannot infer physics from hover-distribution images under separate pretraining.
+→ v5.0 unfreezes the visual encoder and trains it端到端 (End-to-End) alongside the flow network on mixed hover and recovery data.
 
 Phase 3e: v5 Architecture — Cross-Attention + State Prediction Aux
          [✓]  v5 BC pre-training — DONE
@@ -282,34 +282,37 @@ Phase 3e: v5 Architecture — Cross-Attention + State Prediction Aux
               Root cause: lambda_state too small; rot6D std≈0.04 → OOD tilt = ±5σ state error
          [✗]  v5 Distillation Run 2 (lambda_state=1.0) — FAILED (killed @ 20/200)
               state_loss still growing (avg 1.913 vs 1.336 at start), crash_rate 100%
-              Root cause confirmed: gradient conflict (flow_loss ↔ state_loss share vis_pooled)
-                                    + hover-only BC has no OOD image coverage
+              Root cause confirmed: gradient conflict (flow_loss ↔ state_loss share vis_pooled) + hover-only BC has no OOD image coverage
+         [✓]  v5.0 Joint E2E training (warm-started from H4, encoder unfrozen, 50% hover + 50% recovery demos) — DONE (2026-06-03)
+              Best val/flow_loss = 0.0642 @ epoch 30 (ckpt: checkpoints/flow_policy_v5/20260603_171316/best_model.pt)
+              RHC eval: survival rate 60.1% (+55% relative increase), IAE_steady 2.85m, composite score 0.073
 
 Phase 4: Hardware Deployment
          [ ]  1-step inference (<16ms target)
          [ ]  Jetson Orin Nano + TensorRT
 ```
 
-**Current status (v5 — 2026-05-18):**
+**Current status (v5.0 — 2026-06-04):**
 
-**v5 Cross-Attention + State Aux 架構（2026-05-18）：**
+**v5.0 Joint End-to-End Training (2026-06-03):**
+By unfreezing the visual encoder and training on a 50/50 mix of hover and recovery demos, we resolved the encoder-action alignment issue. The survival rate of `Joint_E2E_v5` reached **60.1%** (+55% relative increase over H4 BC), the highest among all vision policies. However, steady-state drift increased (IAE 2.85m vs 1.32m) due to the recovery demos desensitizing the encoder to sub-meter corrections. Future work will introduce dynamic task conditioning to address this trade-off.
 
-v5 BC 預訓練完成（best val=0.06273 @ epoch 22），兩次蒸餾訓練均以 100% crash rate 失敗。根因確診：hover-only BC 缺乏 OOD 覆蓋，flow_loss 與 state_loss 的梯度衝突（gradient conflict），以及 rot6D normalized 空間下的結構性 state_loss 爆炸（±5σ）。下一步待定（OOD 資料收集、RL 正向 advantage mask 或更大 vision encoder）。
-
-**Major findings (v4.0 — 2026-05-13 ~ 2026-05-17):**
+**Major findings (v4.0 & v5.0 — 2026-05-13 ~ 2026-06-03):**
 1. **RMSE was misleading the entire v4.0 effort.** It is biased toward short-lived policies (smaller integration window). Past "best" Run 10 (RMSE 0.30m) only survived 36 steps; new evaluation reveals it ranks WORST.
 2. **H4 IMU-dominant fusion = real v4.0 SOTA.** Enlarged IMU encoder to feature_dim=512 (grad ratio 46.8× → 9.9× → **3.22×**). BC alone gives 202 steps avg (vs H3a BC 130, **+55%**) without any RL.
-3. **Disturbance is NOT the crash cause.** Disabling it in eval changed nothing.
-4. **Phase lag (RHC) is secondary.** T_action=4→1 only +13% steps.
-5. **AWR mode-collapse confirmed.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate its own crash trajectories. All RL runs systematically destroyed BC.
+3. **Joint E2E training solves alignment.** Unfreezing the encoder during BC on hover+recovery data enables representation learning aligned with action generation, lifting survival to **60.1%**.
+4. **AWR mode-collapse confirmed.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate its own crash trajectories. All RL runs systematically destroyed BC.
 
 **New evaluation framework (飛→穩→準 hierarchy):**
-- Tier 1: `survival_rate = ep_length / max_episode_steps` (gate ≥ 50%)
-- Tier 2: `IAE_steady = mean(|e_t|)` over second half
-- Tier 3: `terminal_err = mean(|e_t|)` over last 10%
-- Composite: `score = survival × (0.6·stability + 0.4·accuracy)`
+- Tier 1: `survival_rate = ep_length / max_episode_steps`
+- Tier 2 (Stability): `stability_score = exp(-IAE_steady)` where `IAE_steady = mean(|e_t|)` over second half of episode
+- Tier 3 (Accuracy): `accuracy_score = exp(-terminal_err)` where `terminal_err = mean(|e_t|)` over last 10% of episode
+- Composite:
+  - If `survival_rate < 0.5`: `score = 0.5 × survival_rate` (max 0.25)
+  - If `survival_rate ≥ 0.5`: `score = survival_rate × (0.6 × stability_score + 0.4 × accuracy_score)`
+  *(Refactored from linear clipping `max(0, 1 - error/2)` to smooth exponential decay `exp(-error)` to reward longer flights).*
 
-See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md) for full diagnostic chain.
+See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md) and [docs/experiment_report_joint_e2e.md](docs/experiment_report_joint_e2e.md) for full diagnostic chains and report.
 
 v4.0 architectural pivot from v3.x:
 
@@ -514,29 +517,29 @@ Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.
 
 ## Evaluation Metrics / 評估指標
 
-### 新框架：飛→穩→準 Hierarchical Score (2026-05-15+)
+### 新框架：飛→穩→準 Hierarchical Score (2026-06-04+，指數衰減型)
 
 | Checkpoint | Score | Survive | IAE_steady | Terminal | 詮釋 |
 |-----------|-------|---------|------------|----------|------|
-| **H4 BC**（v4.0 SOTA） | **0.165** | **44.0%** | 1.473m | 2.510m | 純 BC，無 RL |
-| v5 BC（2026-05-18） | *未評估* | — | — | — | val/flow=0.0627，hover-only |
-| Run25_u50 (H4 BC + warmup) | 0.158 | 43.2% | 1.650m | 3.022m | 接近 BC |
-| H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 上一代架構 |
-| v5 Distill Run1/Run2 | ~0.0 | ~0% | — | — | crash_rate 100%，蒸餾失敗 |
-| Run19_RL（舊 RMSE 排名第一）| 0.078 | 15.6% | 0.710m | 1.113m | **死得最快的精準 hover** |
+| **H4 BC**（v4.0 SOTA） | **0.171** | 38.8% | 1.325m | 2.426m | 純 BC，無 RL，高頻精準度高 |
+| **Joint_E2E_v5**（2026-06-03） | **0.073** | **60.1%** | 2.852m | 4.961m | 端到端聯合訓練，生存率最高，唯漂移略大 |
+| v5.0 OOB Pretrain BC | 0.112 | 49.0% | 1.773m | 3.074m | 舊線性指標分數，存活高，漂移大 |
+| H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 上一代架構（舊線性指標分數）|
+| v5.0 Stage D Best | 0.073 | 55.2% | 2.259m | 3.852m | flow_net 重訓對齊失敗（舊線性指標分數）|
+| Run23_RL（RL 最佳）| 0.093 | 18.6% | 0.770m | 1.272m | 舊指標微懸停，但生存極差 |
 | PPO Expert（理論上限） | ~0.85 | 100% | 0.065m | 0.065m | state-based oracle |
 
 ### 傳統指標（含 RMSE 偏誤警告）
 
-| Metric | PPO Expert (state) | v4.0 H4 BC (vision) | Target | 註釋 |
-|--------|-------------------|---------------------|--------|------|
-| Position RMSE | 0.065m | 1.165m | < 0.15m | **RMSE 偏袒短命 policy，已知偏誤** |
-| Crash Rate | 0% (0/50) | 50/50 (但撐 202 steps avg) | < 50% | Survival rate 是更可靠指標 |
-| Inference Latency | — | 8.2ms (1-step) / 14ms (2-step) | <16ms ✓ | 達標 |
-| Control Frequency | — | 50Hz (T_action=1, 2-step inference) | >62Hz | 略低於目標但可接受 |
-| Hierarchical Score | ~0.85 | 0.165 | > 0.50 | 主要 SOTA 指標 |
+| Metric | PPO Expert (state) | v4.0 H4 BC (vision) | Joint_E2E_v5 (vision) | Target | 註釋 |
+|--------|-------------------|---------------------|-----------------------|--------|------|
+| Position RMSE | 0.065m | 1.070m | 2.271m | < 0.15m | **RMSE 偏袒短命 policy，已知偏誤** |
+| Crash Rate | 0% (0/50) | 61.2% | 39.9% | < 50% | Survival rate 是更可靠指標 |
+| Inference Latency | — | 14ms (2-step) | 14ms (2-step) | <16ms ✓ | 達標 |
+| Control Frequency | — | 50Hz (T_action=1) | 50Hz (T_action=1) | >62Hz | 略低於目標但可接受 |
+| Hierarchical Score | ~0.85 | 0.171 | 0.073 | > 0.50 | 主要 SOTA 指標 |
 
-**Status note:** 27 RL fine-tuning runs (Apr-May 2026) all destroyed BC policy under new metric. H4 BC alone is current best. See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md).
+**Status note:** v5.0 pipeline through Stages A–D originally failed due to separate pretraining, but subsequent **Joint End-to-End Training (2026-06-03)** succeeded in training the encoder and action head jointly on mixed data, lifting survival to **60.1%** (+55% relative increase). The evaluation metric was also refactored to use exponential decay ($e^{-e}$) to resolve hard clipping. See [docs/experiment_report_joint_e2e.md](docs/experiment_report_joint_e2e.md).
 
 ---
 

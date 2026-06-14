@@ -21,7 +21,8 @@ is fine-tuned with D²PPO (Dispersive PPO) advantage-weighted RL to overcome cov
 | ~~v4.0 Ph.3b~~ | ~~ReinFlow RL Fine-tuning~~ | Done (concluded) — 27 runs all fail (AWR mode-collapse). H4 BC = SOTA. |
 | ~~v4.0 Ph.3c~~ | ~~DAgger Recovery~~ | DENIED (2026-05-12): recovery data poisons hover BC. |
 | **v4.0 Ph.3d** | **H4 Architecture + Hierarchical Metric** | Done — H4 IMU 512D, V/I ratio 3.22×, new 飛→穩→準 metric. |
-| ~~v5 pipeline~~ | ~~Cross-Attn + State Aux + DAgger + OOB Pretrain~~ | **CONCLUDED (2026-05-19)** — Stages A→D all fail. H4 BC confirmed v4.0 SOTA. Encoder-action alignment structurally unsolvable via separate pretraining. |
+| **v5.0 BC** | **Joint E2E Training (warm-start, unfrozen) + Phase B&C (task-conditioned + dispersive loss)** | **Done** — Joint E2E survival 60.1%, val_flow 0.0642 (`20260603_171316`); Phase B&C val_flow 0.0663 (`20260604_141454`) |
+| **v5.0 RL** | **ReinFlow + positive_advantage_mask Fine-tuning (Phase D)** | **Done (concluded)** — best: score 0.130 σ=2.0, survive 27.9% (⚠️ short-survival artifact, tier1=1/30); final: survive 4.8% (curriculum collapse, reward -0.22→-3.08). Checkpoint: `reinflow_v5/reinflow_v5_20260604_193923` |
 | v4.0 Ph.4 | Hardware deployment (Jetson Orin Nano) | Future |
 | v3.3 ref | DPPO v3.3 best result | Done — Run 1: RMSE 0.1039m, 50/50 crashes |
 
@@ -87,20 +88,27 @@ python check_device.py
 ## Key Commands
 
 ```bash
+# --- Phase 3e: v5.0 Joint E2E training (Visual encoder unfrozen, mixed hover + recovery demos) ---
+dppo/Scripts/python.exe -m scripts.train_flow_v5 \
+    --config configs/flow_policy_v5.yaml \
+    --recovery-h5 data/expert_demos_v4_recovery.h5 \
+    --recovery-episodes 500 \
+    --hover-episodes 500
+
+# --- Hierarchical evaluation (新 SOTA metric: 飛→穩→準) ---
+# Auto-detects H3a / H4 / v5 architecture from checkpoint state_dict.
+dppo/Scripts/python.exe -m scripts.evaluate_hierarchical \
+    --n-episodes 30 \
+    --ckpts \
+        "H4_BC:checkpoints/flow_policy_v4/20260514_175219/best_model.pt" \
+        "Joint_E2E_v5:checkpoints/flow_policy_v5/20260603_171316/best_model.pt"
+
 # --- Phase 3b: D²PPO fine-tuning ---
 python -m scripts.train_dppo \
     --pretrained checkpoints/diffusion_policy/20260402_032701/best_model.pt
 
 # --- Phase 3a: Supervised training (only if re-running from scratch) ---
 python -m scripts.train_diffusion --config configs/diffusion_policy.yaml
-
-# --- Hierarchical evaluation (新 SOTA metric: 飛→穩→準) ---
-# Auto-detects H3a / H4 architecture from checkpoint state_dict.
-dppo/Scripts/python.exe -m scripts.evaluate_hierarchical \
-    --n-episodes 20 \
-    --ckpts \
-        "H4_BC:checkpoints/flow_policy_v4/20260514_175219/best_model.pt" \
-        "Run25_best:checkpoints/reinflow_v4/reinflow_v4_20260515_023519/best_reinflow_model.pt"
 
 # --- RHC closed-loop evaluation (legacy RMSE; WARNING: RMSE is biased toward short-lived policies) ---
 python -m scripts.evaluate_rhc \
@@ -127,7 +135,10 @@ tensorboard --logdir logs/diffusion_policy/
 | v4.0 CTBR PPO Expert | `checkpoints/ppo_expert_v4/20260419_142245/best_model.pt` |
 | v4.0 Flow Matching BC (original arch, historical) | `checkpoints/flow_policy_v4/20260420_034314/best_model.pt` |
 | v4.0 H3a hover-only BC (IMU 128D) | `checkpoints/flow_policy_v4/20260512_170638/best_model.pt` |
-| **v4.0 H4 BC (current SOTA, IMU 512D)** | **`checkpoints/flow_policy_v4/20260514_175219/best_model.pt`** |
+| **v4.0 H4 BC (current BC Score SOTA, IMU 512D)** | **`checkpoints/flow_policy_v4/20260514_175219/best_model.pt`** |
+| **v5.0 Joint E2E Training (Highest Survival SOTA, 60.1%)** | **`checkpoints/flow_policy_v5/20260603_171316/best_model.pt`** |
+| v5.0 Phase B&C BC (task-conditioned + dispersive loss, val_flow 0.0663) | `checkpoints/flow_policy_v5/20260604_141454/best_model.pt` |
+| v5.0 ReinFlow RL best (positive_advantage_mask, pre-collapse, score 0.130) | `checkpoints/reinflow_v5/reinflow_v5_20260604_193923/best_reinflow_model.pt` |
 | v4.0 Run 23 (H3a + RL hover-only) | `checkpoints/reinflow_v4/reinflow_v4_20260514_055001/best_reinflow_model.pt` |
 | v4.0 Run 25 (H4 + RL, AWR mode-collapse) | `checkpoints/reinflow_v4/reinflow_v4_20260515_023519/best_reinflow_model.pt` |
 | v4.0 Run 26 (H4 + Linear IAE reward) | `checkpoints/reinflow_v4/reinflow_v4_20260516_052606/best_reinflow_model.pt` |
@@ -149,7 +160,7 @@ D²PPO loss: L = E[ exp(β × A_norm) × ||ε_θ(a,τ,s) − ε||² ]
 Value net:  ValueNetwork(feature_dim=256, hidden_dim=256) → scalar V(s)
 ```
 
-**Architecture H4 (Current SOTA, 2026-05-15+):**
+**Architecture H4 (Current BC Score SOTA, 2026-05-15+):**
 ```
 FPV image stack (6×64×64) → VisionEncoder → 256D vision_feat (456k params)
 6D IMU [ω,a]              → IMUEncoder MLP(6→1024→512) → 512D imu_feat (532k params, DOMINANT)
@@ -160,6 +171,19 @@ cat([256D, 512D])          → 768D global_cond  (IMU 67%)
 
 V/I gradient ratio: 46.8× (Original) → 9.9× (H3a) → 3.22× (H4)
 Inference: 2-step Euler (14ms, recommended; 1-step is suboptimal post-RL)
+```
+
+**Architecture v5.0 (Current Survival SOTA, 2026-06-03+):**
+```
+FPV image stack (6×64×64) → VisionEncoderV5 (CNN) → spatial_map (256, 4, 4) & pooled (256D)
+6D IMU [ω,a]              → IMUEncoder MLP(6→1024→512) → 512D imu_feat
+pooled & spatial_map      → CrossAttentionIMU2Vision (Q=Linear(imu_feat), K=V=spatial_map) → attended (256D)
+cat([attended, imu_feat])  → 768D global_cond
+768D + timestep(128D)      → 896D cond → ConditionalUnet1D → velocity field v_θ (Flow Matching)
+
+[Training only - State Aux Loss] pooled (256D) → StatePredictor (256→256→15) → state_pred (15D)
+L = L_flow + λ_state × MSE(state_pred, state_gt) + λ_tilt × MSE(tilt_pred, tilt_gt)
+Inference: Visual encoder is UNROZEN and trained端到端 (End-to-End) alongside flow_net on mixed data.
 ```
 
 **Architecture v3.1 (Phase 3c, historical):**
@@ -339,31 +363,41 @@ curriculum:
 
 ---
 
-## Results Summary (Hierarchical Metric — 飛→穩→準, 2026-05-15+)
+## Results Summary (Hierarchical Metric — 飛→穩→準, 2026-06-04+)
 
-| Rank | Checkpoint | Score | Survive | IAE_steady | Term err | Steps avg |
-|------|-----------|-------|---------|------------|----------|-----------|
-| 1 | **H4 BC** (v4.0 SOTA, confirmed) | **0.167–0.171** | ~40% | ~1.45m | ~2.6m | **202** |
-| 2 | v5 OOB pretrain | 0.140 | 51.5% | 1.407m | 2.441m | — |
-| 3 | H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 197 |
-| 4 | v5 Stage D best | 0.073 | 55.2% | 2.259m | 3.852m | — |
-| 5 | Run23_RL (best RL) | 0.093 | 18.6% | 0.770m | 1.272m | 86 |
-| ref | PPO Expert (state-based) | ~0.85 | 100% | 0.065m | 0.065m | 500 |
+| Rank | Checkpoint | Score | Survive | IAE_steady | Term err | Steps avg / Notes |
+|------|-----------|-------|---------|------------|----------|-------------------|
+| 1 | **H4 BC** (v4.0 BC SOTA) | **0.171** | 38.8% | 1.325m | 2.426m | **194** (Highest composite score, old metric) |
+| 2 | **v5_RL_best** (Phase D best ckpt, σ=2.0) | **0.130** | 27.9% | **1.224m** | **1.902m** | 139 avg ⚠️ **short-survival artifact** (tier1=1/30; IAE low = crashed early, not precision) |
+| 3 | **v5_BC** (Phase B&C BC, σ=2.0) | **0.126** | 54.9% | 2.505m | 4.454m | 274 avg, val_flow 0.0663, task-conditioned + dispersive loss |
+| 4 | **Joint_E2E_v5** (2026-06-03) | **0.073** | **60.1%** | 2.852m | 4.961m | **300.5** (Highest survival SOTA, old metric; σ=2.0 re-eval: 0.110, 55.3%) |
+| 5 | v5.0 OOB pretrain | 0.112 | 49.0% | 1.773m | 3.074m | — (Separate pretraining) |
+| 6 | H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 197 |
+| 7 | v5.0 Stage D best | 0.073 | 55.2% | 2.259m | 3.852m | — (flow_net re-train failed) |
+| 8 | Run23_RL (best RL) | 0.093 | 18.6% | 0.770m | 1.272m | 86 (AWR mode-collapse) |
+| 9 | **v5_RL_final** (Phase D final, σ=2.0) | 0.032 | 4.8% | 0.656m | 1.045m | 24 avg, curriculum collapse (0.57m boundary) |
+| ref | PPO Expert (state-based) | ~0.85 | 100% | 0.065m | 0.065m | 500 (Oracle) |
 
-**v4.0 FINAL SOTA:** **H4 BC** (score 0.167–0.171, 202 steps avg). Confirmed 2026-05-19 after v5 pipeline A→D all failed.
-**Inference:** 14ms with n_steps=2 (recommended; 1-step is suboptimal post-RL).
+**SOTA STATUS (as of 2026-06-04):**
+- **Highest Composite Score SOTA (old metric):** **H4 BC** (score **0.171**, 194 steps avg).
+- **Highest Composite Score SOTA (σ=2.0 metric):** **H4 BC** at **~0.166** (ref: gemini.md re-eval). v5_RL_best reports 0.130 but is a ⚠️ short-survival artifact (tier1 pass rate 1/30).
+- **Highest Survival Rate SOTA:** **Joint_E2E_v5** (survival **60.1%**, 300.5 steps avg, 20260603 eval).
+- **v5.0 RL Phase D conclusion:** positive_advantage_mask prevented immediate collapse (VLoss 348→56) but curriculum expansion to pos=0.57m caused catastrophic degradation (survive 27.9%→4.8%, reward -0.22→-3.08). Root cause same as AWR mode-collapse — delayed by masking, not eliminated.
+**Inference:** 14ms with n_steps=2 (recommended).
 **Latency target:** ✓ met (still under 20ms @ 50Hz control period).
 
-### Six Major Findings (2026-05-13~19)
+### Eight Major Findings (2026-05-13 ~ 2026-06-04)
 
 1. **RMSE bias confirmed.** `evaluate_rhc_v4.py:92` divides by `ep_length` not `max_episode_steps` → short-lived policies get artificially low RMSE. Past 24 runs misranked.
 2. **Disturbance not crash cause.** Eval with disturbance OFF: same ~73 step crash. Run 24 hypothesis denied.
 3. **Phase lag secondary.** T_action 4→1: +13%. n_inference_steps 1→3: +35%. Total +53% steps, still 50/50.
 4. **H4 IMU dominance = real v4.0 SOTA.** feature_dim 128→512, grad ratio 9.9→3.22, BC steps 130→202 (+55%).
 5. **AWR mode-collapse.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate own crash trajectories. All 27 RL runs degrade systematically.
-6. **Encoder-action alignment unsolvable via separate pretraining (v5 pipeline).** OOB encoder optimizes state-regression features ≠ action-generation optimal features. DAgger with 100% crash rollouts is structurally broken. H4 BC ceiling = 0.171. Next: E2E joint training or RL on H4 BC with AWR fix.
+6. **Encoder-action alignment solved via Joint E2E Training (v5.0 Joint E2E).** By unfreezing the visual encoder and training on 50% hover + 50% recovery data, the representation space aligned with action generation, boosting survival rate to **60.1%** (+55% relative increase over H4 BC).
+7. **Refactored hierarchical scoring metric.** The linear clipping `max(0, 1 - error/2)` was replaced with smooth exponential decay `exp(-e/σ)` (σ=2.0m) without Tier 1 gate, eliminating the 10× discontinuity cliff at SR=0.5. Old and new metric scores are NOT directly comparable.
+8. **Positive-advantage mask delays but does not eliminate RL degradation.** Phase D `positive_advantage_mask: true` allowed 700 updates to complete with stable VLoss convergence (348→56), fixing the immediate VLoss spike failure seen in v4.0 Phase 3b. However, as curriculum expanded to pos=0.57m, reward degraded from -0.2161 to -3.08 and v5_RL_final survival fell to 4.8% — same pattern as AWR collapse, delayed. v5_RL_best's low IAE (1.224m) is almost certainly a short-survival artifact (same bias as Finding #1), not a precision breakthrough. **Robustness-Precision Capacity Conflict confirmed**: within the given model capacity, high-precision hover and wide-range recovery cannot be jointly optimized via curriculum RL alone.
 
-See `docs/dev_log_v4_h4_hierarchical.md` for full diagnostic chain.
+See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md) and [docs/experiment_report_joint_e2e.md](docs/experiment_report_joint_e2e.md) for full diagnostic chains and reports.
 
 ---
 

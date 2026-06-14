@@ -8,11 +8,11 @@ Implements 飛 → 穩 → 準 hierarchy:
   Tier 3 (Accuracy):  terminal_err = mean(|e_t|) for t ∈ [0.9T, T]
 
 Composite score:
-  if survival_rate < 0.5:  score = 0.5 * survival_rate (Tier 1 fail → ≤0.25)
-  else:
-    accuracy_score = max(0, 1 - terminal_err / 2.0)   # 0 at 2m, 1 at origin
-    stability_score = max(0, 1 - IAE_steady / 2.0)
-    score = survival_rate * (0.6 * stability_score + 0.4 * accuracy_score)
+  score = survival_rate * (0.6 * stability_score + 0.4 * accuracy_score)
+  where stability_score = exp(-IAE_steady / sigma)
+        accuracy_score  = exp(-terminal_err / sigma)
+  Here, sigma is the physical tolerance scale factor (e.g. 2.0m).
+  The Tier 1 hard gate is removed to ensure a continuous and smooth scoring function.
 
 Auto-detects H3a (imu_feature_dim=128) vs H4 (imu_feature_dim=512) from checkpoint.
 """
@@ -43,8 +43,12 @@ def detect_arch(ckpt_path: str) -> dict:
     # v5 = H4 + cross-attention + state predictor head
     is_v5 = ('cross_attn.q_proj.weight' in state
              and 'state_predictor.net.0.weight' in state)
+    task_dim = 0
     if is_v5:
         era = 'V5'; activation = 'ReLU'
+        # Check flow_net.encoder_blocks.0.film.net.1.weight to find cond_dim
+        cond_dim = state['flow_net.encoder_blocks.0.film.net.1.weight'].shape[1]
+        task_dim = cond_dim - (256 + feature_dim + 128)
     elif hidden_dim == 64:
         era = 'Original'; activation = 'Mish'
     elif hidden_dim == 256:
@@ -53,7 +57,7 @@ def detect_arch(ckpt_path: str) -> dict:
         era = 'H4'; activation = 'ReLU'
     return {'imu_hidden': hidden_dim, 'imu_feature_dim': feature_dim,
             'has_tilt': has_tilt, 'era': era, 'activation': activation,
-            'is_v5': is_v5}
+            'is_v5': is_v5, 'task_dim': task_dim}
 
 
 def rebuild_policy_for_arch(policy, arch, device):
@@ -141,16 +145,15 @@ def compute_hierarchical_metrics(positions: np.ndarray, targets: np.ndarray,
     }
 
 
-def composite_score(metrics: dict) -> dict:
-    """Score = survival × (0.6×stability + 0.4×accuracy) with Tier 1 gate."""
+def composite_score(metrics: dict, sigma: float = 2.0) -> dict:
+    """Score = survival × (0.6×stability + 0.4×accuracy) without Tier 1 gate.
+    Uses exponential decay with physical tolerance scale factor sigma.
+    """
     sr = metrics['survival_rate']
-    if sr < 0.5:
-        return {'tier1_pass': False, 'score': 0.5 * sr,
-                'stability_score': 0.0, 'accuracy_score': 0.0}
-    stability_score = max(0.0, 1.0 - metrics['iae_steady'] / 2.0)
-    accuracy_score  = max(0.0, 1.0 - metrics['terminal_err'] / 2.0)
+    stability_score = float(np.exp(-metrics['iae_steady'] / sigma))
+    accuracy_score  = float(np.exp(-metrics['terminal_err'] / sigma))
     score = sr * (0.6 * stability_score + 0.4 * accuracy_score)
-    return {'tier1_pass': True,
+    return {'tier1_pass': bool(sr >= 0.5),
             'stability_score': stability_score,
             'accuracy_score': accuracy_score,
             'score': score}
@@ -160,7 +163,8 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
                  quadrotor_config: str = 'configs/quadrotor_v4.yaml',
                  flow_config: str = 'configs/flow_policy_v4.yaml',
                  n_inference_steps: int = 2,
-                 device_str: str = 'cuda') -> dict:
+                 device_str: str = 'cuda',
+                 sigma: float = 2.0) -> dict:
     """Evaluate one checkpoint with hierarchical metrics."""
     device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
 
@@ -186,6 +190,7 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
             action_dim=act_cfg['action_dim'],
             n_inference_steps=n_inference_steps,
             t_embed_scale=flow_cfg['t_embed_scale'],
+            task_dim=arch.get('task_dim', 0),
         ).to(device)
     else:
         policy = FlowMatchingPolicyV4(
@@ -234,9 +239,20 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
             img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device) / 255.0
             imu_tensor = torch.from_numpy(base_env.get_imu()).float().unsqueeze(0).to(device)
 
+            task_cond = None
+            if arch.get('task_dim', 0) > 0:
+                R = base_env.dynamics.get_rotation_matrix()
+                from envs.quadrotor_dynamics import get_tilt_angle
+                tilt_deg = get_tilt_angle(R)
+                pos_err = np.linalg.norm(base_env.target_position - base_env.dynamics.position)
+                ang_vel = np.linalg.norm(base_env.dynamics.ang_velocity)
+                is_recovery = float(pos_err > 1.0 or tilt_deg > 15.0 or ang_vel > 2.0)
+                is_hover = 1.0 - is_recovery
+                task_cond = torch.tensor([[is_hover, is_recovery]], device=device)
+
             with torch.no_grad():
                 action_seq = policy.predict_action(
-                    img_tensor, imu_tensor, n_steps=n_inference_steps)
+                    img_tensor, imu_tensor, n_steps=n_inference_steps, task_cond=task_cond)
             action_seq = action_seq.squeeze(0).T.cpu().numpy()  # (T_pred, action_dim)
 
             for a_idx in range(min(T_action, action_seq.shape[0])):
@@ -260,7 +276,7 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
 
         metrics = compute_hierarchical_metrics(positions, targets, omegas, ep_length,
                                                 base_env.max_episode_steps)
-        score = composite_score(metrics)
+        score = composite_score(metrics, sigma=sigma)
         metrics.update(score)
         metrics['ep_reward'] = ep_reward
         all_metrics.append(metrics)
@@ -295,6 +311,8 @@ def main():
     parser.add_argument('--quadrotor-config', default='configs/quadrotor_v4.yaml')
     parser.add_argument('--flow-config', default='configs/flow_policy_v4.yaml')
     parser.add_argument('--n-inference-steps', type=int, default=2)
+    parser.add_argument('--sigma', type=float, default=2.0,
+                        help='Physical tolerance scale factor in meters (default: 2.0)')
     parser.add_argument('--output', default='evaluation_results/hierarchical_comparison.json')
     args = parser.parse_args()
 
@@ -306,7 +324,7 @@ def main():
             print(f"  SKIP: not found"); continue
         try:
             agg = evaluate_one(path, args.n_episodes, args.quadrotor_config,
-                               args.flow_config, args.n_inference_steps)
+                               args.flow_config, args.n_inference_steps, sigma=args.sigma)
             agg['label'] = label
             agg['path'] = path
             all_results[label] = agg

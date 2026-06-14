@@ -50,6 +50,7 @@ class FlowDatasetV5(Dataset):
       actions: (action_dim, T_pred) float32
       tilt:    () float32
       state:   (15,) float32 — normalised by PPO expert obs_rms
+      task:    (2,) float32 — [is_hover, is_recovery]
     """
 
     def __init__(self, sources: list, obs_rms: RunningMeanStd,
@@ -58,7 +59,7 @@ class FlowDatasetV5(Dataset):
         self.T_obs  = T_obs
         self.T_pred = T_pred
 
-        img_buf, imu_buf, act_buf, tilt_buf, state_buf = [], [], [], [], []
+        img_buf, imu_buf, act_buf, tilt_buf, state_buf, task_buf = [], [], [], [], [], []
         skipped_count = 0
 
         for h5_path, episode_indices in sources:
@@ -68,12 +69,14 @@ class FlowDatasetV5(Dataset):
                     key = f'episode_{ep_idx}'
                     if key not in f:
                         continue
-                    if hover_only:
-                        ep_attrs = f[key].attrs
-                        ep_type  = ep_attrs.get('episode_type', 'hover')
-                        if ep_type != 'hover' or 'init_tilt_deg' in ep_attrs:
-                            skipped_count += 1
-                            continue
+                    ep_attrs = f[key].attrs
+                    ep_type  = ep_attrs.get('episode_type', 'hover')
+                    is_rec = ('init_tilt_deg' in ep_attrs or ep_type == 'recovery')
+                    if hover_only and is_rec:
+                        skipped_count += 1
+                        continue
+                    task_label = np.array([0.0, 1.0], dtype=np.float32) if is_rec else np.array([1.0, 0.0], dtype=np.float32)
+
                     imgs       = f[key]['images'][:]
                     acts       = f[key]['actions'][:]
                     imus       = f[key]['imu_data'][:]
@@ -89,19 +92,21 @@ class FlowDatasetV5(Dataset):
                         tilt_buf.append(np.float32(np.arccos(np.clip(r2z, -1.0, 1.0))))
                         # Normalise full 15D state with PPO obs_rms
                         state_buf.append(obs_rms.normalize(s).astype(np.float32))
+                        task_buf.append(task_label)
 
         self._img_arr   = np.stack(img_buf)
         self._imu_arr   = np.stack(imu_buf)
         self._act_arr   = np.stack(act_buf)
         self._tilt_arr  = np.array(tilt_buf, dtype=np.float32)
         self._state_arr = np.stack(state_buf)
+        self._task_arr  = np.stack(task_buf)
 
         N = len(self._img_arr)
         if skipped_count > 0:
             print(f"  [hover_only] skipped {skipped_count} non-hover episodes")
         print(f"  Total: {N:,} samples  "
               f"img={self._img_arr.nbytes/1e9:.2f}GB  "
-              f"imu+act+state={(self._imu_arr.nbytes + self._act_arr.nbytes + self._state_arr.nbytes)/1e6:.1f}MB")
+              f"imu+act+state={(self._imu_arr.nbytes + self._act_arr.nbytes + self._state_arr.nbytes + self._task_arr.nbytes)/1e6:.1f}MB")
 
     def __len__(self):
         return len(self._img_arr)
@@ -113,6 +118,7 @@ class FlowDatasetV5(Dataset):
             torch.from_numpy(self._act_arr[idx]),
             torch.tensor(self._tilt_arr[idx]),
             torch.from_numpy(self._state_arr[idx]),
+            torch.from_numpy(self._task_arr[idx]),
         )
 
 
@@ -252,6 +258,7 @@ def train(args):
         cross_attn_heads       = xattn_cfg.get('n_heads', 8),
         state_predictor_hidden = sp_cfg.get('hidden_dim', 256),
         state_dim              = sp_cfg.get('state_dim', 15),
+        task_dim               = 2,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -329,15 +336,16 @@ def train(args):
     for epoch in range(1, num_epochs + 1):
         # ------------- train -------------
         model.train()
-        ep_flow, ep_state, ep_tilt, ep_total = 0.0, 0.0, 0.0, 0.0
+        ep_flow, ep_state, ep_tilt, ep_disp, ep_total = 0.0, 0.0, 0.0, 0.0, 0.0
         t_start = time.time()
 
-        for images, imu, actions, tilt_gt, state_gt in train_loader:
+        for images, imu, actions, tilt_gt, state_gt, task_cond in train_loader:
             images   = images.to(device=device, dtype=torch.float32, non_blocking=True)
             imu      = imu.to(device, non_blocking=True)
             actions  = actions.to(device, non_blocking=True)
             tilt_gt  = tilt_gt.to(device, non_blocking=True)
             state_gt = state_gt.to(device, non_blocking=True)
+            task_cond = task_cond.to(device, non_blocking=True)
 
             images = gpu_augment(images) / 255.0
 
@@ -348,6 +356,8 @@ def train(args):
                     states_gt=state_gt, lambda_state=lambda_state,
                     tilt_gt=tilt_gt,    lambda_tilt=lambda_tilt,
                     return_components=True,
+                    task_cond=task_cond,
+                    lambda_dispersive=args.lambda_disp,
                 )
             scaler.scale(total_loss).backward()
             scaler.unscale_(optimizer)
@@ -360,6 +370,7 @@ def train(args):
             ep_flow  += comp['flow_loss'].item()
             ep_state += comp.get('state_loss', torch.tensor(0.0)).item()
             ep_tilt  += comp.get('tilt_loss',  torch.tensor(0.0)).item()
+            ep_disp  += comp.get('loss_dispersive', torch.tensor(0.0)).item()
             global_step += 1
 
         nb = len(train_loader)
@@ -367,6 +378,7 @@ def train(args):
         avg_flow  = ep_flow  / nb
         avg_state = ep_state / nb
         avg_tilt  = ep_tilt  / nb
+        avg_disp  = ep_disp  / nb
         lr_now = scheduler.get_last_lr()[0]
         elapsed = time.time() - t_start
 
@@ -375,17 +387,20 @@ def train(args):
         val_flow = 0.0
         val_state = 0.0
         with torch.no_grad():
-            for images, imu, actions, _, state_gt in val_loader:
+            for images, imu, actions, _, state_gt, task_cond in val_loader:
                 images   = images.to(device=device, dtype=torch.float32,
                                      non_blocking=True) / 255.0
                 imu      = imu.to(device, non_blocking=True)
                 actions  = actions.to(device, non_blocking=True)
                 state_gt = state_gt.to(device, non_blocking=True)
+                task_cond = task_cond.to(device, non_blocking=True)
                 with autocast('cuda'):
                     _, comp = model.compute_loss(
                         images, imu, actions,
                         states_gt=state_gt, lambda_state=lambda_state,
                         return_components=True,
+                        task_cond=task_cond,
+                        lambda_dispersive=args.lambda_disp,
                     )
                 val_flow  += comp['flow_loss'].item()
                 val_state += comp['state_loss'].item()
@@ -397,13 +412,14 @@ def train(args):
         writer.add_scalar('train/flow_loss',  avg_flow,  epoch)
         writer.add_scalar('train/state_loss', avg_state, epoch)
         writer.add_scalar('train/tilt_loss',  avg_tilt,  epoch)
+        writer.add_scalar('train/loss_dispersive', avg_disp, epoch)
         writer.add_scalar('val/flow_loss',    val_flow,  epoch)
         writer.add_scalar('val/state_loss',   val_state, epoch)
         writer.add_scalar('train/lr',         lr_now,    epoch)
 
         if epoch % 5 == 0 or epoch == 1:
             print(f"  Epoch {epoch:>3}/{num_epochs} | "
-                  f"flow={avg_flow:.5f} state={avg_state:.5f} tilt={avg_tilt:.5f} "
+                  f"flow={avg_flow:.5f} state={avg_state:.5f} tilt={avg_tilt:.5f} disp={avg_disp:.5f} "
                   f"| val_flow={val_flow:.5f} val_state={val_state:.5f} "
                   f"| lr={lr_now:.2e} | {elapsed:.1f}s")
 
@@ -441,5 +457,7 @@ if __name__ == '__main__':
     parser.add_argument('--freeze-vision', action='store_true',
                         help='Freeze vision_encoder weights; train only flow_net + cross_attn '
                              '(Stage D: re-align action head to OOB-pretrained features)')
+    parser.add_argument('--lambda-disp', type=float, default=0.05,
+                        help='Dispersive loss weight (default: 0.05)')
     args = parser.parse_args()
     train(args)

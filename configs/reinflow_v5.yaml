@@ -1,0 +1,41 @@
+# ReinFlow v5.0 Configuration
+# Phase D: Joint E2E + Cross-Attention + Dynamic Task Conditioning + Positive-Advantage Mask
+
+rl:
+  loss_type: weighted               # weighted MSE loss
+  sde_noise_std: 0.1                # unused for weighted loss
+  clip_epsilon: 0.2
+  learning_rate: 1.0e-7             # stable policy learning rate
+  value_lr: 1.0e-3
+  value_hidden_dim: 512             # larger value capacity for 770D conditioning
+  n_rollout_steps: 4096
+  n_epochs: 1
+  mini_batch: 256
+  gamma: 0.99
+  gae_lambda: 0.95
+  advantage_beta: 0.1               # exp(0.1*A) weighting
+  grad_clip: 1.0
+  value_warmup_updates: 50
+  vloss_gate: 999.0                 # disabled (same as v4)
+  vloss_best_threshold: 100.0
+  save_freq_ckpt: 10
+  total_updates: 700
+  lambda_bc: 0.01                   # BC expert regularisation weight
+  positive_advantage_mask: true     # Phase D: reject negative advantages (no crash imitation)
+  demo_path: data/expert_demos_v4.h5
+  demo_episodes: 100
+  lambda_disp: 0.05                 # dispersive loss weight in RL stage (Phase C)
+
+curriculum:
+  enabled: true
+  n_hover_updates: 600
+  n_ramp_updates: 200
+  pos_start: 0.1
+  pos_end: 2.0
+  vel_start: 0.3
+  vel_end: 2.0
+
+logging:
+  tensorboard_log: "./logs/reinflow_v5/"
+  save_path: "./checkpoints/reinflow_v5/"
+  save_freq: 50
