@@ -140,7 +140,21 @@ def gpu_augment(images: torch.Tensor) -> torch.Tensor:
 # Training
 # ---------------------------------------------------------------------------
 
+def set_seed(seed: int):
+    """Seed python / numpy / torch for reproducible ablation runs (P2)."""
+    import random
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def train(args):
+    if args.seed is not None:
+        set_seed(args.seed)
+        print(f"[seed] python/numpy/torch seeded with {args.seed}")
+
     with open(args.config, 'r', encoding='utf-8') as f:
         cfg = yaml.safe_load(f)
 
@@ -308,9 +322,10 @@ def train(args):
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir  = os.path.join(log_cfg['tensorboard_log'], timestamp)
-    save_dir = os.path.join(log_cfg['save_path'], timestamp)
+    # Use --tag for deterministic run dirs (P2 ablation manifest mapping); else timestamp.
+    run_name = args.tag if args.tag else datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_dir  = os.path.join(log_cfg['tensorboard_log'], run_name)
+    save_dir = os.path.join(log_cfg['save_path'], run_name)
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(save_dir, exist_ok=True)
     writer = SummaryWriter(log_dir)
@@ -458,6 +473,12 @@ if __name__ == '__main__':
                         help='Freeze vision_encoder weights; train only flow_net + cross_attn '
                              '(Stage D: re-align action head to OOB-pretrained features)')
     parser.add_argument('--lambda-disp', type=float, default=0.05,
-                        help='Dispersive loss weight (default: 0.05)')
+                        help='Dispersive loss weight (default: 0.05; set 0.0 to disable '
+                             '— the Dispersive OFF arm of the P2 ablation)')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Seed python/numpy/torch for reproducible P2 ablation runs')
+    parser.add_argument('--tag', type=str, default=None,
+                        help='Run name for log/checkpoint dirs (e.g. p2_D1E1_s0); '
+                             'replaces the default timestamp so the sweep manifest can map runs')
     args = parser.parse_args()
     train(args)

@@ -159,22 +159,16 @@ def composite_score(metrics: dict, sigma: float = 2.0) -> dict:
             'score': score}
 
 
-def evaluate_one(ckpt_path: str, n_episodes: int = 30,
-                 quadrotor_config: str = 'configs/quadrotor_v4.yaml',
-                 flow_config: str = 'configs/flow_policy_v4.yaml',
-                 n_inference_steps: int = 2,
-                 device_str: str = 'cuda',
-                 sigma: float = 2.0) -> dict:
-    """Evaluate one checkpoint with hierarchical metrics."""
-    device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
+def build_policy(ckpt_path: str, cfg: dict, n_inference_steps: int, device) -> tuple:
+    """Construct a flow policy matching the checkpoint's architecture and load weights.
 
-    with open(flow_config, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
+    Returns (policy, arch). Extracted from evaluate_one so other scripts (e.g. the
+    frozen P0 protocol) can reuse identical model construction.
+    """
     vis_cfg = cfg['vision']
     act_cfg = cfg['action']
     flow_cfg = cfg['flow']
 
-    # Auto-detect IMU arch
     arch = detect_arch(ckpt_path)
     imu_feature_dim = arch['imu_feature_dim']
 
@@ -217,6 +211,94 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
         if non_tilt:
             print(f"  (warning: missing keys: {non_tilt[:3]}...)")
     policy.eval()
+    return policy, arch
+
+
+def rollout_episode(policy, base_env, visual_env, arch, T_obs, T_action,
+                    n_inference_steps, device, seed=None) -> dict:
+    """Run one closed-loop RHC episode and return raw per-step trajectories.
+
+    If ``seed`` is given, the episode is made fully reproducible: the gym env
+    init (via ``reset(seed=)``), the *global* numpy RNG used by the visual
+    domain-randomisation / per-frame noise, and the torch RNG used for flow
+    inference noise are all seeded. This is what the frozen P0 protocol uses to
+    guarantee every model sees identical initial conditions (paired comparison).
+    When ``seed`` is None the behaviour is identical to the original eval.
+    """
+    if seed is not None:
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        obs, _ = visual_env.reset(seed=seed)
+    else:
+        obs, _ = visual_env.reset()
+
+    image_buffer = [obs['image']] * T_obs
+    positions, targets, omegas = [], [], []
+    done = False
+    ep_length = 0
+    ep_reward = 0.0
+
+    while not done:
+        img_stack = np.concatenate(image_buffer[-T_obs:], axis=0)
+        img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device) / 255.0
+        imu_tensor = torch.from_numpy(base_env.get_imu()).float().unsqueeze(0).to(device)
+
+        # Only v5-with-task accepts a task_cond kwarg; v4 predict_action does not.
+        extra_kwargs = {}
+        if arch.get('task_dim', 0) > 0:
+            R = base_env.dynamics.get_rotation_matrix()
+            from envs.quadrotor_dynamics import get_tilt_angle
+            tilt_deg = get_tilt_angle(R)
+            pos_err = np.linalg.norm(base_env.target_position - base_env.dynamics.position)
+            ang_vel = np.linalg.norm(base_env.dynamics.ang_velocity)
+            is_recovery = float(pos_err > 1.0 or tilt_deg > 15.0 or ang_vel > 2.0)
+            is_hover = 1.0 - is_recovery
+            extra_kwargs['task_cond'] = torch.tensor([[is_hover, is_recovery]], device=device)
+
+        with torch.no_grad():
+            action_seq = policy.predict_action(
+                img_tensor, imu_tensor, n_steps=n_inference_steps, **extra_kwargs)
+        action_seq = action_seq.squeeze(0).T.cpu().numpy()  # (T_pred, action_dim)
+
+        for a_idx in range(min(T_action, action_seq.shape[0])):
+            action = action_seq[a_idx]
+            obs, reward, terminated, truncated, info = visual_env.step(action)
+            image_buffer.append(obs['image'])
+            ep_reward += reward
+            ep_length += 1
+
+            positions.append(info['position'].copy())
+            targets.append(info['target'].copy())
+            omegas.append(base_env.dynamics.ang_velocity.copy())
+
+            if terminated or truncated:
+                done = True
+                break
+
+    return {
+        'positions': np.array(positions),
+        'targets': np.array(targets),
+        'omegas': np.array(omegas),
+        'ep_length': ep_length,
+        'ep_reward': ep_reward,
+    }
+
+
+def evaluate_one(ckpt_path: str, n_episodes: int = 30,
+                 quadrotor_config: str = 'configs/quadrotor_v4.yaml',
+                 flow_config: str = 'configs/flow_policy_v4.yaml',
+                 n_inference_steps: int = 2,
+                 device_str: str = 'cuda',
+                 sigma: float = 2.0) -> dict:
+    """Evaluate one checkpoint with hierarchical metrics."""
+    device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
+
+    with open(flow_config, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    vis_cfg = cfg['vision']
+    act_cfg = cfg['action']
+
+    policy, arch = build_policy(ckpt_path, cfg, n_inference_steps, device)
 
     base_env = QuadrotorEnvV4(config_path=quadrotor_config)
     visual_env = QuadrotorVisualEnv(base_env, image_size=vis_cfg['image_size'])
@@ -227,61 +309,17 @@ def evaluate_one(ckpt_path: str, n_episodes: int = 30,
     all_metrics = []
 
     for ep in range(n_episodes):
-        obs, _ = visual_env.reset()
-        image_buffer = [obs['image']] * T_obs
-        positions, targets, omegas = [], [], []
-        done = False
-        ep_length = 0
-        ep_reward = 0.0
-
-        while not done:
-            img_stack = np.concatenate(image_buffer[-T_obs:], axis=0)
-            img_tensor = torch.from_numpy(img_stack).float().unsqueeze(0).to(device) / 255.0
-            imu_tensor = torch.from_numpy(base_env.get_imu()).float().unsqueeze(0).to(device)
-
-            task_cond = None
-            if arch.get('task_dim', 0) > 0:
-                R = base_env.dynamics.get_rotation_matrix()
-                from envs.quadrotor_dynamics import get_tilt_angle
-                tilt_deg = get_tilt_angle(R)
-                pos_err = np.linalg.norm(base_env.target_position - base_env.dynamics.position)
-                ang_vel = np.linalg.norm(base_env.dynamics.ang_velocity)
-                is_recovery = float(pos_err > 1.0 or tilt_deg > 15.0 or ang_vel > 2.0)
-                is_hover = 1.0 - is_recovery
-                task_cond = torch.tensor([[is_hover, is_recovery]], device=device)
-
-            with torch.no_grad():
-                action_seq = policy.predict_action(
-                    img_tensor, imu_tensor, n_steps=n_inference_steps, task_cond=task_cond)
-            action_seq = action_seq.squeeze(0).T.cpu().numpy()  # (T_pred, action_dim)
-
-            for a_idx in range(min(T_action, action_seq.shape[0])):
-                action = action_seq[a_idx]
-                obs, reward, terminated, truncated, info = visual_env.step(action)
-                image_buffer.append(obs['image'])
-                ep_reward += reward
-                ep_length += 1
-
-                positions.append(info['position'].copy())
-                targets.append(info['target'].copy())
-                omegas.append(base_env.dynamics.ang_velocity.copy())
-
-                if terminated or truncated:
-                    done = True
-                    break
-
-        positions = np.array(positions)
-        targets = np.array(targets)
-        omegas = np.array(omegas)
-
-        metrics = compute_hierarchical_metrics(positions, targets, omegas, ep_length,
-                                                base_env.max_episode_steps)
+        roll = rollout_episode(policy, base_env, visual_env, arch,
+                               T_obs, T_action, n_inference_steps, device)
+        metrics = compute_hierarchical_metrics(
+            roll['positions'], roll['targets'], roll['omegas'],
+            roll['ep_length'], base_env.max_episode_steps)
         score = composite_score(metrics, sigma=sigma)
         metrics.update(score)
-        metrics['ep_reward'] = ep_reward
+        metrics['ep_reward'] = roll['ep_reward']
         all_metrics.append(metrics)
 
-        print(f"  Ep {ep+1:>2}/{n_episodes} | steps={ep_length:>3} | "
+        print(f"  Ep {ep+1:>2}/{n_episodes} | steps={roll['ep_length']:>3} | "
               f"survive={metrics['survival_rate']*100:>4.1f}% | "
               f"IAE_st={metrics['iae_steady']:.3f}m | "
               f"term={metrics['terminal_err']:.3f}m | "

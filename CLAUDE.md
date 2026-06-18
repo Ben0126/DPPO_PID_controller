@@ -5,7 +5,8 @@
 Vision-based quadrotor control research. A Diffusion Policy (Phase 3a supervised pre-training)
 is fine-tuned with D²PPO (Dispersive PPO) advantage-weighted RL to overcome covariate shift.
 
-**Core contribution:** Dispersive Loss prevents feature collapse in high-speed visual drone control.
+**Core contribution (original thesis):** Dispersive Loss prevents feature collapse in high-speed visual drone control.
+**⚠️ Status (2026-06-18): this thesis FAILED its pre-registered test.** P2 2×2 ablation (Dispersive×E2E, 3 seeds, frozen protocol): Dispersive gives no survival/Tier1 gain above seed noise (D1E1 vs D0E1 +1.1pp, pooled std 4.2pp); with a frozen encoder it is a byte-identical no-op (D1E0 ≡ D0E0, MD5-identical ×3 seeds). Pivot to negative-result + diagnosis — see `RESEARCH_PLAN_v6.md`.
 **Target venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---
@@ -363,28 +364,30 @@ curriculum:
 
 ---
 
-## Results Summary (Hierarchical Metric — 飛→穩→準, 2026-06-04+)
+## Results Summary — P0 Frozen Protocol (2026-06-17)
 
-| Rank | Checkpoint | Score | Survive | IAE_steady | Term err | Steps avg / Notes |
-|------|-----------|-------|---------|------------|----------|-------------------|
-| 1 | **H4 BC** (v4.0 BC SOTA) | **0.171** | 38.8% | 1.325m | 2.426m | **194** (Highest composite score, old metric) |
-| 2 | **v5_RL_best** (Phase D best ckpt, σ=2.0) | **0.130** | 27.9% | **1.224m** | **1.902m** | 139 avg ⚠️ **short-survival artifact** (tier1=1/30; IAE low = crashed early, not precision) |
-| 3 | **v5_BC** (Phase B&C BC, σ=2.0) | **0.126** | 54.9% | 2.505m | 4.454m | 274 avg, val_flow 0.0663, task-conditioned + dispersive loss |
-| 4 | **Joint_E2E_v5** (2026-06-03) | **0.073** | **60.1%** | 2.852m | 4.961m | **300.5** (Highest survival SOTA, old metric; σ=2.0 re-eval: 0.110, 55.3%) |
-| 5 | v5.0 OOB pretrain | 0.112 | 49.0% | 1.773m | 3.074m | — (Separate pretraining) |
-| 6 | H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 197 |
-| 7 | v5.0 Stage D best | 0.073 | 55.2% | 2.259m | 3.852m | — (flow_net re-train failed) |
-| 8 | Run23_RL (best RL) | 0.093 | 18.6% | 0.770m | 1.272m | 86 (AWR mode-collapse) |
-| 9 | **v5_RL_final** (Phase D final, σ=2.0) | 0.032 | 4.8% | 0.656m | 1.045m | 24 avg, curriculum collapse (0.57m boundary) |
-| ref | PPO Expert (state-based) | ~0.85 | 100% | 0.065m | 0.065m | 500 (Oracle) |
+> ⚠️ **METRIC RESET — old composite scores are NOT comparable.** The eval metric changed 3× (RMSE → linear-clip → exp-decay hierarchical). **P0 freezes one protocol** — `scripts/evaluate_frozen_p0.py` (30 ep, base_seed 12345, σ=2.0 exp-decay, paired identical init, bootstrap 95% CI) — with artifact-robust columns. Canonical artifact: `evaluation_results/frozen_p0_leaderboard.json`.
 
-**SOTA STATUS (as of 2026-06-04):**
-- **Highest Composite Score SOTA (old metric):** **H4 BC** (score **0.171**, 194 steps avg).
-- **Highest Composite Score SOTA (σ=2.0 metric):** **H4 BC** at **~0.166** (ref: gemini.md re-eval). v5_RL_best reports 0.130 but is a ⚠️ short-survival artifact (tier1 pass rate 1/30).
-- **Highest Survival Rate SOTA:** **Joint_E2E_v5** (survival **60.1%**, 300.5 steps avg, 20260603 eval).
-- **v5.0 RL Phase D conclusion:** positive_advantage_mask prevented immediate collapse (VLoss 348→56) but curriculum expansion to pos=0.57m caused catastrophic degradation (survive 27.9%→4.8%, reward -0.22→-3.08). Root cause same as AWR mode-collapse — delayed by masking, not eliminated.
-**Inference:** 14ms with n_steps=2 (recommended).
-**Latency target:** ✓ met (still under 20ms @ 50Hz control period).
+**Frozen leaderboard** (sorted by composite score; `cond-*` = precision over episodes surviving ≥250 steps ONLY; `n_cond` of 30):
+
+| Model | Score (95% CI) | Survive | Tier1% | cond-IAE (n) | all-IAE | %Oracle |
+|-------|----------------|---------|--------|--------------|---------|---------|
+| **PPO Oracle** (state-based) | 0.967 [.966,.967] | 100% | 100% | 0.068m (30) | 0.068m | **100%** |
+| H4_BC | 0.168 [.154,.182] | 40.8% | 13.3% | 2.520m (4) ⚠️ | 1.428m | 17.4% |
+| v5_RL_best | 0.129 [.117,.139] | 28.8% | 13.3% | 3.340m (4) ⚠️ | 1.289m | 13.3% |
+| v5_BC | 0.124 [.107,.143] | 55.9% | 70.0% | 2.724m (21) | 2.553m | 12.8% |
+| Joint_E2E_v5 | 0.106 [.095,.118] | 62.2% | 80.0% | 3.077m (24) | 2.994m | 11.0% |
+
+⚠️ `n_cond=4` (H4_BC, v5_RL_best): only 4/30 episodes flew past 250 steps → cond-IAE unreliable; the low all-IAE is a **short-survival artifact**, not precision.
+
+**SOTA STATUS (P0-corrected):**
+- **Oracle measured, not assumed:** state-based PPO = **0.9668** through the same frozen protocol (replaces hard-coded **0.85**). Best vision policy = **17.4% of oracle** → nothing deployable (~5× the 0.068m oracle hover error; no sub-meter closed-loop vision hover exists).
+- **"H4 BC = SOTA" OVERTURNED:** composite-score-only; survives 40.8% / Tier1 13.3%. Multiplicative `SR×precision` still rewards "die early but precise".
+- **"v5_RL_best precision gain" OVERTURNED (artifact):** low all-IAE = early crash (n_cond 4/30); conditional IAE 3.340m is the WORST of the group.
+- **Honest single number = Tier1 pass%:** **Joint_E2E_v5 80% > v5_BC 70% ≫ H4_BC ≈ v5_RL_best 13%. Survival frontier = Joint_E2E_v5.**
+- **Inference:** 14ms @ n_steps=2 (✓ under 20ms @ 50Hz). Latency was never the bottleneck.
+
+See `memory/project_p0_frozen_eval.md` for the corrected leaderboard rationale and short-survival-artifact proof.
 
 ### Eight Major Findings (2026-05-13 ~ 2026-06-04)
 
