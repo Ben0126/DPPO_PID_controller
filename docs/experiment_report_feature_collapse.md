@@ -52,7 +52,7 @@ true**; there *was* something for Dispersive to fix.
 ### (3) Dispersive does NOT fix collapse — it games its objective
 D1E1 drives the literal dispersive loss far down (−1.23 → −8.14) and inflates mean
 pairwise distance ~1270× (3.5 → 4486). But it achieves this **purely by inflating
-the feature norm ~287×** (1.80 → 3281), not by spreading information across
+the feature norm ~287×** (11.4 → 3281), not by spreading information across
 dimensions. The intrinsic dimensionality gets **worse, not better**:
 
 - effective rank **9.0 → 2.0** (the *lowest* of all four cells),

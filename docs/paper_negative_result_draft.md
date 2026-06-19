@@ -300,7 +300,7 @@ D0E0 to 4 d.p.). **(ii)** Collapse is *real*: naive E2E (D0E1) drops effective r
 30→9 and drives mean pairwise cosine to 0.96 (features nearly colinear) — there *was*
 something for Dispersive to fix. **(iii)** Dispersive does not fix it; it **games its
 objective**. It minimises `L_disp` (−1.23→−8.14) and inflates pairwise distance ~1270×,
-but does so purely by inflating the feature norm ~287× (1.8→3281); the *intrinsic*
+but does so purely by inflating the feature norm ~287× (11.4→3281); the *intrinsic*
 dimensionality gets **worse** (effective rank 9→2; 99.8 % of variance on 2 dims). The
 "healthy-looking" low cosine (0.013) is a 2-D-at-huge-radius artifact, not high-
 dimensional spread. Because `vis_pooled` feeds only the auxiliary head (§3), the

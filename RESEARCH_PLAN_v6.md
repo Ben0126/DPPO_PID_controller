@@ -246,7 +246,7 @@ Result is **sharper than the pre-registered "mechanism is inert" prediction**:
 
 1. **Frozen no-op confirmed at the feature level.** D1E0 ≡ D0E0 to 4 d.p. (complements the MD5 byte-identity).
 2. **Collapse is real.** Naive E2E (D0E1) collapses the H4 features: eff_rank 30→9, mean pairwise cosine 0.07→**0.96**. There *was* something for Dispersive to fix.
-3. **Dispersive gambles its objective and makes collapse worse.** D1E1 minimises the literal dispersive loss (−1.23→−8.14) only by **inflating feature norm ~287×** (1.8→3281); intrinsic rank gets *worse* (9→**2**, 99.8 % variance on 2 dims). The low cosine (0.013) is a 2-D-at-huge-radius artifact, not high-dim spread. It most cheaply inflates the pooled-only `fc` layer — and `vis_pooled` feeds only the aux `StatePredictor`, **not** the action path (`cat([attended, imu_feat])`).
+3. **Dispersive gambles its objective and makes collapse worse.** D1E1 minimises the literal dispersive loss (−1.23→−8.14) only by **inflating feature norm ~287×** (11.4→3281); intrinsic rank gets *worse* (9→**2**, 99.8 % variance on 2 dims). The low cosine (0.013) is a 2-D-at-huge-radius artifact, not high-dim spread. It most cheaply inflates the pooled-only `fc` layer — and `vis_pooled` feeds only the aux `StatePredictor`, **not** the action path (`cat([attended, imu_feat])`).
 4. **Survival is decoupled from `vis_pooled` rank.** Effective rank swings **15×** (30→2) while survival is flat within seed noise (66→65 %). Strongest statement of the v6 thesis: representation collapse is *not* the binding constraint for visual hover.
 
 ### 3c — Survival-mover attribution ✓ DONE (2026-06-18)
