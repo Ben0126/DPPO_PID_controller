@@ -1,7 +1,7 @@
 # Representation Collapse Is Not the Bottleneck: A Negative Result and Diagnosis for Vision-Based Quadrotor Hover
 
-**Draft v0.1 — 2026-06-18.** Working title (adjustable). Target: ICRA / robot-learning
-workshop. **Simulation-only; no real-robot claim.** This draft is assembled from the
+**Draft v0.3 — 2026-06-19.** Target: ICRA / robot-learning
+workshop (venue TBD). **Simulation-only; no real-robot claim.** This draft is assembled from the
 frozen-protocol leaderboard and the Phase 3 diagnostic reports; every number is
 reproducible from the cited script/artifact.
 
@@ -15,10 +15,16 @@ intermediate features — has been proposed to prevent it and thereby improve
 high-frequency visual control. We pre-registered and tested this hypothesis on a
 vision-based quadrotor hover task (monocular 64×64 FPV + IMU, flow-matching policy,
 50 Hz closed loop). Under a **frozen evaluation protocol** (paired initial conditions,
-conditional-on-survival precision, bootstrap CIs, a *measured* state-based oracle), a
-2×2×3-seed ablation (Dispersive × end-to-end encoder) finds that **Dispersive Loss
-yields no survival or task-precision gain above seed noise** (+1.1 pp Tier-1 within a
-4.2 pp pooled std), and with a frozen encoder it is **byte-identical** to its absence.
+conditional-on-survival precision, bootstrap CIs, across-seed mean ± std, a *measured*
+state-based oracle), a
+**2×2 ablation** (Dispersive × end-to-end encoder, three seeds per cell) finds that
+**Dispersive Loss yields no survival or task-precision gain above seed noise** (+1.1 pp
+Tier-1 within a 4.2 pp pooled std), and with a frozen encoder it is **byte-identical**
+to its absence.
+Reaching even this null verdict required a protocol hardened against **single-seed
+noise**: our own from-pixels PPO baseline swings between a 0 % and 47 % Tier-1 pass-rate
+on the training seed alone, so we report every retrained model as an **across-seed
+mean ± std** rather than a single leaderboard row.
 We then diagnose *why*, with three observation-only measurements that require no
 retraining: (i) Dispersive does not cure collapse — it **games its own objective**,
 inflating feature norm ~287× while the intrinsic rank gets *worse* (effective rank
@@ -35,7 +41,7 @@ channel is. We release the protocol and all diagnostics.
 ## 1. Introduction
 
 End-to-end visual control with generative policies (diffusion [3], flow matching [4])
-is a fast-moving area, and a recurring failure mode is *representation collapse*: when
+has advanced rapidly, but a recurring failure mode is *representation collapse*: when
 the visual encoder is trained jointly with the action head, its features can degenerate
 onto a low-dimensional subspace, losing the information the controller needs.
 **Dispersive Loss** [13] addresses this by adding a contrastive term that repels a
@@ -52,11 +58,12 @@ Our answer is **no**, and the value of the paper is the *diagnosis* of why. We m
 three contributions:
 
 1. **A frozen evaluation protocol** for visual hover that is robust to the
-   short-survival artifact that silently inflates precision metrics for policies that
-   crash early (paired seeds, conditional-on-survival precision, bootstrap CIs, and a
+   short-survival *and* single-seed artifacts that silently mislead precision metrics and
+   leaderboard rows for policies that crash early or train unstably (paired seeds,
+   conditional-on-survival precision, bootstrap CIs, across-seed mean ± std, and a
    *measured* rather than assumed oracle).
-2. **A pre-registered 2×2×3-seed falsification** of the Dispersive-Loss hypothesis,
-   including a byte-identical no-op control.
+2. **A pre-registered 2×2 falsification** (three seeds per cell) of the Dispersive-Loss
+   hypothesis, including a byte-identical no-op control.
 3. **A mechanistic diagnosis** separating the three candidate bottlenecks
    (representation, data coverage, sensing) and localising the real one.
 
@@ -154,10 +161,12 @@ performance upper bound.
 ## 4. Frozen Evaluation Protocol
 
 The project's metric had changed three times (RMSE → linear-clip hierarchical →
-exp-decay hierarchical), making cross-run numbers incomparable, and a **short-survival
+exp-decay hierarchical), making cross-run numbers incomparable; a **short-survival
 artifact** kept inflating precision for policies that crash early (a policy that dies at
-step 24 was credited with a "precise" 0.6 m hover from its few alive steps). We freeze
-one protocol (`evaluate_frozen_p0.py`) and do not change it:
+step 24 was credited with a "precise" 0.6 m hover from its few alive steps); and, as we
+demonstrate below with our own PPO baseline, **single-seed evaluation is itself
+unreliable** — a collapse-prone policy can swing from Tier-1 0 % to 47 % on the training
+seed alone. We freeze one protocol (`evaluate_frozen_p0.py`) and do not change it:
 
 - **Paired initial conditions.** Episode *i* uses `seed = 12345 + i` to seed the env,
   the global RNG (visual domain randomisation), and torch (flow noise), so every model
@@ -168,27 +177,66 @@ one protocol (`evaluate_frozen_p0.py`) and do not change it:
   **only over episodes that survived ≥ 250 steps** (`cond-IAE`, with its support
   `n_cond`); the naive all-episode IAE is reported but flagged.
 - **Bootstrap 95% CIs** over episodes.
+- **Across-seed mean ± std** for every model we *retrain* in this work — Table 1's P1
+  baselines and Table 2's 2×2 cells — over three training seeds. The legacy flow-policy
+  checkpoints predate this work and are single-seed; that is a stated limitation, and the
+  seed sensitivity we document below is exactly why a single training run is not a safe
+  basis for a leaderboard row.
 - **Measured oracle.** The state-based PPO oracle is rolled through the *same* protocol;
   its composite score (**0.9668**, 100 % survival, 0.068 m hover IAE) is the
   normaliser (`%Oracle`), replacing a previously hard-coded constant.
 
-Under this protocol, the prior leaderboard's two headline claims collapse: "H4 = SOTA"
-(true only on a multiplicative composite that rewards *die-early-but-precise*; H4
-survives 40.8 %, Tier-1 13.3 %) and "RL gives 51 % precision gain" (a short-survival
-artifact: its conditional IAE is the *worst* of the group, 3.34 m, on n_cond = 4/30).
+Under this protocol, **three single-seed claims fail to survive.** Two come from the
+prior leaderboard: "H4 = SOTA" (true only on a multiplicative composite that rewards
+*die-early-but-precise*; H4 survives 40.8 %, Tier-1 13.3 %) and "RL gives 51 % precision
+gain" (a short-survival artifact: its conditional IAE is the *worst* of the group,
+3.34 m, on n_cond = 4/30). The third we generate ourselves and catch with the seed
+protocol: on a single seed our PPO-from-pixels baseline "uniformly collapses"
+(Tier-1 0 %), but over three seeds it is only *collapse-prone* — a high-variance Tier-1
+of **15.6 ± 22.0 %**, with one seed reaching 47 % — so the single-seed verdict
+simultaneously over- and under-states the behaviour. The lesson is structural, not
+incidental: on this task one training seed is not a safe basis for a leaderboard row,
+which is why every model we retrain is reported as a seed mean ± std.
 **No vision policy exceeds ~17 % of oracle; none is deployable.** (Table 1.)
 
-**Table 1 — Frozen leaderboard** (`evaluation_results/frozen_p0_leaderboard.json`).
+**Table 1 — Frozen leaderboard** (flow policies: `evaluation_results/frozen_p0_leaderboard.json`;
+P1 baselines ᴮ, 3 seeds: `evaluation_results/baselines_frozen_leaderboard.json`,
+`evaluation_results/baselines_frozen_ppopx.json`, per-seed
+`…_{bc,ppopx}_s{1,2}.json`, aggregate `…_seeds_aggregate.json`).
 
-| Model | Score (95% CI) | Survive | Tier-1 | cond-IAE (n) | %Oracle |
-|-------|---------------:|--------:|-------:|-------------:|--------:|
+| Model | Score | Survive | Tier-1 | cond-IAE (n) | %Oracle |
+|-------|------:|--------:|-------:|-------------:|--------:|
 | PPO Oracle (state) | 0.967 [.966,.967] | 100 % | 100 % | 0.068 m (30) | 100 % |
 | H4_BC | 0.168 [.154,.182] | 40.8 % | 13.3 % | 2.520 m (4)⚠ | 17.4 % |
 | v5_RL_best | 0.129 [.117,.139] | 28.8 % | 13.3 % | 3.340 m (4)⚠ | 13.3 % |
 | v5_BC | 0.124 [.107,.143] | 55.9 % | 70.0 % | 2.724 m (21) | 12.8 % |
+| PPO-from-pixels ᴮ | 0.114 ± 0.017 | 30.1 ± 15.6 % | 15.6 ± 22.0 % | 2.83 m (1/3)⚠⚠ | 11.8 ± 1.8 % |
 | Joint_E2E_v5 | 0.106 [.095,.118] | 62.2 % | 80.0 % | 3.077 m (24) | 11.0 % |
+| BC-vision-only ᴮ | 0.089 ± 0.018 | 54.7 ± 3.4 % | 61.1 ± 13.4 % | 3.30 ± 0.36 m (18) | 9.2 ± 1.8 % |
 
 ⚠ n_cond = 4: cond-IAE unreliable; the low all-IAE is a short-survival artifact.
+⚠⚠ PPO-from-pixels is collapse-prone, not uniformly collapsed: 2 of 3 seeds survive
+0/30 past 250 steps (n_cond = 0, cond-IAE undefined; their low all-IAE 0.70–0.87 m is a
+pure short-survival artifact, crashing ~75 steps), while 1 seed reaches Tier-1 46.7 %
+(cond-IAE 2.83 m). The cond-IAE shown is that single surviving seed (1/3).
+ᴮ P1 baseline (this work): **mean ± std over 3 seeds {0,1,2}** (population std, matching
+Table 2); the bracketed [.,.] on the other rows are bootstrap 95 % CIs over a single
+checkpoint's episodes. BC-vision-only = no IMU, no flow (plain vision→action MLP);
+PPO-from-pixels = end-to-end RL from pixels (1 M steps, CTBR).
+
+**The two P1 baselines (3 seeds each) sit within the flow-policy band and reinforce the
+diagnosis.** A plain vision→action regressor (BC-vision-only: no IMU, no flow) already
+reaches **9.2 ± 1.8 % of oracle at Tier-1 61.1 ± 13.4 %** — *on par with* the IMU-fused
+flow policies v5_BC (12.8 %, Tier-1 70 %) and Joint_E2E_v5 (11.0 %, Tier-1 80 %), well
+within the wide across-seed spread. Flow modelling and IMU fusion thus buy little in
+survival on this task: **policy sophistication is not the bottleneck.** The other
+baseline, PPO-from-pixels, is the collapse-prone case dissected above; here it doubles as
+a clean short-survival-artifact demonstration. On its two collapsed seeds the deceptively
+low *all*-IAE (0.70–0.87 m) is a textbook instance of what the §4 protocol is built to
+expose — they "look precise" only because they crash (~75 steps) before they can drift —
+whereas averaging over seeds raises the all-IAE to 1.41 ± 0.89 m once the surviving
+seed's drift is counted. Both baselines stay far below the 17 % ceiling; none is
+deployable.
 
 ---
 
@@ -397,6 +445,7 @@ the result and its diagnosis are reproducible.
 | Component | Script | Artifact |
 |-----------|--------|----------|
 | Frozen protocol + measured oracle | `scripts/evaluate_frozen_p0.py` | `evaluation_results/frozen_p0_leaderboard.json` |
+| §4 P1 baselines (BC-vision-only, PPO-from-pixels), 3 seeds | `scripts/train_bc_vision_only.py`, `scripts/train_ppo_from_pixels.py` (+ `models/ppo_pixel.py`, `configs/ppo_from_pixels.yaml`), `scripts/evaluate_baselines_frozen.py`; seed driver `scripts/run_baseline_seeds_1_2.sh` | seed 0: `evaluation_results/baselines_frozen_leaderboard.json`, `…_ppopx.json`; seeds 1–2: `…_{bc,ppopx}_s{1,2}.json`; aggregate (mean±std): `…_baselines_frozen_seeds_aggregate.json` |
 | 2×2 ablation sweep / aggregate | `scripts/run_p2_ablation.py`, `scripts/evaluate_p2_ablation.py` | `evaluation_results/p2_ablation_{manifest,leaderboard}.json` |
 | §6.1 feature geometry | `scripts/measure_feature_collapse.py` | `evaluation_results/p2_feature_collapse.json` — `docs/experiment_report_feature_collapse.md` |
 | §6.2 survival movers | — | `docs/experiment_report_survival_movers.md` |
@@ -412,9 +461,9 @@ oracle 0.9668.
 ## References
 
 > Sources retrieved via NotebookLM (notebook *Generative RL & Flow Policy Research*,
-> 2026-06-19). Author lists, venues, and identifiers are transcribed from the grounded
-> sources; entries marked † were completed from the citing papers' reference sections
-> and should be re-checked against the publisher of record before camera-ready.
+> 2026-06-19). All author lists, venues, and identifiers were verified against the
+> publisher of record (arXiv / official proceedings) on 2026-06-19; no entries remain
+> unverified.
 
 [1] J. Ho, A. Jain, P. Abbeel. "Denoising Diffusion Probabilistic Models." *NeurIPS*, 2020.
 
@@ -447,11 +496,11 @@ Online Reinforcement Learning." arXiv:2505.22094, 2025.
 [10] K. Black, M. Janner, Y. Du, I. Kostrikov, S. Levine. "Training Diffusion Models with
 Reinforcement Learning (DDPO)." arXiv:2305.13301, 2023.
 
-[11] † Y. Fan, O. Watkins, Y. Du, et al. "Reinforcement Learning for Fine-tuning
-Text-to-Image Diffusion Models (DPOK)." *NeurIPS*, 2023.
+[11] Y. Fan, O. Watkins, Y. Du, et al. "DPOK: Reinforcement Learning for Fine-tuning
+Text-to-Image Diffusion Models." *NeurIPS*, 2023. arXiv:2305.16381.
 
-[12] † M. Psenka, A. Escontrela, P. Abbeel, Y. Ma. "Learning a Diffusion Model Policy from
-Rewards via Q-Score Matching (QSM)." 2024.
+[12] M. Psenka, A. Escontrela, P. Abbeel, Y. Ma. "Learning a Diffusion Model Policy from
+Rewards via Q-Score Matching (QSM)." *ICML*, 2024. arXiv:2312.11752.
 
 [13] R. Wang, K. He. "Diffuse and Disperse: Image Generation with Representation
 Regularization." arXiv:2506.09027, 2025. (Submitted to *ICLR* 2026.)
@@ -459,17 +508,18 @@ Regularization." arXiv:2506.09027, 2025. (Submitted to *ICLR* 2026.)
 [14] G. Zou, W. Li, H. Wu, Y. Qian, Y. Wang, H. Wang. "D²PPO: Diffusion Policy Policy
 Optimization with Dispersive Loss." *AAAI*, 2026. arXiv:2508.02644.
 
-[15] † S. Yu, et al. "Representation Alignment for Generation: Training Diffusion
-Transformers Is Easier Than You Think (REPA)." 2024.
+[15] S. Yu, S. Kwak, H. Jang, J. Jeong, J. Huang, J. Shin, S. Xie. "Representation
+Alignment for Generation: Training Diffusion Transformers Is Easier Than You Think
+(REPA)." *ICLR* (Oral), 2025. arXiv:2410.06940.
 
-[16] † A. Bardes, J. Ponce, Y. LeCun. "VICReg: Variance-Invariance-Covariance
-Regularization for Self-Supervised Learning." *ICLR*, 2022.
+[16] A. Bardes, J. Ponce, Y. LeCun. "VICReg: Variance-Invariance-Covariance
+Regularization for Self-Supervised Learning." *ICLR*, 2022. arXiv:2105.04906.
 
-[17] † J. Zbontar, L. Jing, I. Misra, Y. LeCun, S. Deny. "Barlow Twins: Self-Supervised
-Learning via Redundancy Reduction." *ICML*, 2021.
+[17] J. Zbontar, L. Jing, I. Misra, Y. LeCun, S. Deny. "Barlow Twins: Self-Supervised
+Learning via Redundancy Reduction." *ICML*, 2021. arXiv:2103.03230.
 
-[18] † "DM1: MeanFlow with Dispersive Regularization for 1-Step Robotic Manipulation."
-arXiv preprint, 2025.
+[18] G. Zou, H. Wang, H. Wu, Y. Qian, Y. Wang, W. Li. "DM1: MeanFlow with Dispersive
+Regularization for 1-Step Robotic Manipulation." arXiv:2510.07865, 2025.
 
 [19] J. Sheng, Z. Wang, P. Li, M. Liu. "MP1: MeanFlow Tames Policy Learning in 1-step for
 Robotic Manipulation." arXiv:2507.10543, 2025.

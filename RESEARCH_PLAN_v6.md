@@ -62,8 +62,8 @@ oracle upper bound, all scored by the **identical** frozen protocol.
 | Baseline | Input | Role | Status |
 |----------|-------|------|--------|
 | **PPO Oracle** (state-based) | 15D state | Upper bound (%Oracle ref = 0.9668) | ✓ DONE |
-| **BC-vision-only** | RGB stack (no IMU, no flow) | Naive lower bound: regress action seq with MSE | script ready (`scripts/train_bc_vision_only.py`) |
-| **PPO-from-pixels** | RGB stack | End-to-end RL-from-pixels reference | specified below (next) |
+| **BC-vision-only** | RGB stack (no IMU, no flow) | Naive lower bound: regress action seq with MSE | ✓ DONE 2026-06-19 (3 seeds {0,1,2}) — **Score 0.089±0.018, Survive 54.7±3.4%, Tier1 61.1±13.4%, %Oracle 9.2±1.8%** (in the flow-policy band; seed 0's Tier1 80% was luck) |
+| **PPO-from-pixels** | RGB stack | End-to-end RL-from-pixels reference | ✓ DONE 2026-06-19 (3 seeds {0,1,2}, 1M steps) — **COLLAPSE-PRONE: Score 0.114±0.017, Survive 30.1±15.6%, Tier1 15.6±22.0%, %Oracle 11.8±1.8%** (2/3 seeds collapse n_cond 0/30; seed 1 survives Tier1 46.7%) |
 | H4_BC / v5_BC / Joint_E2E_v5 / v5_RL_best | RGB+IMU | Existing flow policies | ✓ in leaderboard |
 
 ### 1.1 BC-vision-only (runnable now)
@@ -86,16 +86,36 @@ dppo/Scripts/python.exe -m scripts.evaluate_baselines_frozen \
     --oracle-norm checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz
 ```
 
-### 1.2 PPO-from-pixels (next baseline — specified, not yet built)
-Train PPO end-to-end on `QuadrotorVisualEnv` (CNN actor-critic over the 6×64×64
-stack, INDI inner loop unchanged). Reuses `models.ppo_expert` PPO core with the
-state MLP swapped for `VisionEncoder` + actor/critic heads; the env already returns
-`obs['image']`. Eval through `scripts.evaluate_baselines_frozen` (same
-`predict_action` contract). **Prior:** the project has strong evidence vision RL
-from scratch collapses (27 ReinFlow runs, AWR mode-collapse) — this baseline
-documents *how far* naive pixel-PPO gets, it is not expected to be competitive.
-Implementation: `scripts/train_ppo_from_pixels.py` (TODO), config
-`configs/ppo_from_pixels.yaml` (TODO).
+### 1.2 PPO-from-pixels (BUILT + smoke-passed 2026-06-19)
+Trains PPO end-to-end on `QuadrotorVisualEnv(QuadrotorEnvV4)` (CNN actor-critic over
+the 6×64×64 stack, CTBR + INDI inner loop unchanged). `models/ppo_pixel.py` reuses the
+flow policies' `VisionEncoder` (6→256); actor and critic each own a **separate**
+encoder (mirrors `PPOExpert`'s separate-net design so per-network grad-clip stays
+valid). The actor exposes the flow `predict_action(images, imu=None, n_steps=None,
+task_cond=None) -> (B, action_dim, T_pred)` contract (reactive single action tiled to
+T_pred), so it scores through `scripts.evaluate_baselines_frozen --kind ppo_pixels`.
+**Pixel-specific implementation notes:** (i) T_obs=2 frame stacking maintained across
+the vectorised envs, auto-reset aware; (ii) the rollout buffer is stored **uint8 on
+CPU**, minibatches moved to GPU + /255 inside `update()` (float32-on-GPU ≈ 13 GB
+otherwise). **Budget** (`configs/ppo_from_pixels.yaml`): 1M timesteps (documentation
+budget vs the state expert's 3M), n_steps 2048, 8 envs, lr 1e-4, n_epochs 4. Smoke
+(`--quick`, 2 updates) ran end-to-end at ~43 s/update → **full run ≈ 1 h**.
+**Prior:** strong evidence vision RL from scratch collapses (27 ReinFlow runs, AWR
+mode-collapse) — this documents *how far* naive pixel-PPO gets, not expected to be
+competitive.
+```bash
+dppo/Scripts/python.exe -m scripts.train_ppo_from_pixels --tag ppo_px_s0 --seed 0
+dppo/Scripts/python.exe -m scripts.evaluate_baselines_frozen --kind ppo_pixels \
+    --ckpts "PPO_px:checkpoints/ppo_from_pixels/ppo_px_s0/best_model.pt" \
+    --oracle-ckpt checkpoints/ppo_expert_v4/20260419_142245/best_model.pt \
+    --oracle-norm checkpoints/ppo_expert_v4/20260419_142245/best_obs_rms.npz
+```
+**Result (2026-06-19, `ppo_px_s0`, 1M steps ≈ 1 h):** COLLAPSED as predicted. Training
+eval survive 0% throughout (mean_len 53–73, best 73.1); rollout ep_len stuck ~85–100;
+VL 1600→250. Frozen eval (`baselines_frozen_ppopx.json`): Score 0.100, Survive 15.2%,
+**Tier-1 0%, n_cond 0/30** (nothing flew past 250 steps), %Oracle 10.4%. Its low
+*all*-IAE 0.70m is a pure short-survival artifact (crashes ~75 steps before it can
+drift) — a clean in-the-wild demonstration of the artifact §4's protocol catches.
 
 ---
 
@@ -294,16 +314,32 @@ Barlow Twins, DM1/MP1), and learning-based vision quadrotor control (Loquercio
   gains against our +1.1 pp Tier-1 (inside 4.2 pp seed std) + frozen-encoder
   byte-identical no-op, attributing the gap to setting (50 Hz closed-loop flight vs.
   quasi-static manipulation pre-training) and forward-pointing to the §6 diagnosis.
-- **6 refs marked † (Fan/DPOK, QSM, REPA, VICReg, Barlow Twins, DM1)** were completed
-  from citing papers' reference sections — **verify against publisher of record before
-  camera-ready.** Other entries' arXiv IDs/venues are NotebookLM-grounded.
+- **6 formerly-† refs (Fan/DPOK, QSM, REPA, VICReg, Barlow Twins, DM1) ✓ VERIFIED
+  (2026-06-19)** against publisher of record (arXiv / official proceedings); all †
+  markers removed from the draft. Corrections applied: DPOK title now leads "DPOK:" +
+  arXiv:2305.16381; QSM → *ICML* 2024, arXiv:2312.11752; REPA → *ICLR* 2025 (Oral),
+  arXiv:2410.06940; VICReg arXiv:2105.04906; Barlow Twins arXiv:2103.03230; DM1 authors
+  = Zou et al. (same group as D²PPO [14]), arXiv:2510.07865. No unverified entries remain.
 - **GOTCHA:** the notebook source *"Resolving Policy Collapse and Representation Decay in
   Generative Robot Control"* is a user/AI-written Markdown synthesis note, **NOT a
   citable paper** — deliberately excluded from References.
 
-**TODO before submission:** verify the 6 † references; finalize venue + title; polish
-abstract/intro; Phase 1 baselines (BC-vision-only, PPO-from-pixels) not yet folded
-into the draft tables.
+**Draft status (Draft v0.3, 2026-06-19):** Title FINALIZED; abstract + intro POLISHED;
+venue DEFERRED (header "Target: ICRA / robot-learning workshop (venue TBD)").
+**P1 baselines DONE (3 seeds) + folded into Table 1** — BC-vision-only
+(9.2 ± 1.8 % oracle, Tier-1 61.1 ± 13.4 %) and PPO-from-pixels (collapse-prone:
+Tier-1 15.6 ± 22.0 %, 2/3 seeds collapse to n_cond 0/30, 1/3 reaches Tier-1 46.7 %)
+added as rows ᴮ (mean ± std over seeds {0,1,2}) plus a diagnosis paragraph: plain
+vision-BC sits in the IMU+flow policies' band (→ policy sophistication ≠ bottleneck)
+and pixel-PPO's collapsed-seed low all-IAE is a clean in-the-wild short-survival-artifact
+demo for §4. **Seed 0 was unrepresentative** — its BC Tier-1 80 % and uniform PPO
+collapse (Tier-1 0 %) were single-seed luck; the 3-seed means are the reported numbers.
+Artifacts table + Reproducibility updated; seed driver `scripts/run_baseline_seeds_1_2.sh`,
+aggregate `evaluation_results/baselines_frozen_seeds_aggregate.json`.
+
+**TODO before submission:** finalize venue (user-deferred). All prior content TODOs
+cleared — refs verified, abstract/intro polished, P1 baselines trained (3 seeds, mean ±
+std) + folded.
 
 ---
 

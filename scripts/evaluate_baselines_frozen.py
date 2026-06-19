@@ -47,6 +47,17 @@ def build_baseline(kind, ckpt_path, cfg, device):
         model.load(ckpt_path, map_location=device)
         model.eval()
         return model, {'era': 'BC-vis', 'task_dim': 0}
+    if kind == 'ppo_pixels':
+        from models.ppo_pixel import PixelActor
+        # hidden_dim fixed at 256 (configs/ppo_from_pixels.yaml network.hidden_dim)
+        model = PixelActor(in_channels=vis_cfg['T_obs'] * 3,
+                           feature_dim=vis_cfg['feature_dim'],
+                           action_dim=act_cfg['action_dim'],
+                           hidden_dim=256, T_pred=act_cfg['T_pred']).to(device)
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt['actor'])
+        model.eval()
+        return model, {'era': 'PPO-px', 'task_dim': 0}
     raise ValueError(f"unknown baseline kind: {kind}")
 
 
@@ -88,7 +99,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--ckpts', nargs='+', required=True,
                         help='List of "label:path" pairs (BC-vision-only baselines)')
-    parser.add_argument('--kind', default='bc_vision', choices=['bc_vision'])
+    parser.add_argument('--kind', default='bc_vision', choices=['bc_vision', 'ppo_pixels'])
     parser.add_argument('--n-episodes', type=int, default=30)
     parser.add_argument('--base-seed', type=int, default=12345)
     parser.add_argument('--survive-threshold', type=int, default=250)

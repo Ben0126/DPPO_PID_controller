@@ -1,0 +1,39 @@
+# PPO-from-pixels (v6 P1 baseline)
+# End-to-end RL from the 6x64x64 FPV stack on QuadrotorVisualEnv(QuadrotorEnvV4).
+# Prior: vision RL from scratch collapses (27 ReinFlow runs); this run DOCUMENTS how
+# far naive pixel-PPO gets — it is not expected to be competitive. Budget is reduced
+# vs the 3M-step state expert because each step renders an image + 2 CNN forwards.
+
+training:
+  total_timesteps: 1000000        # documentation budget (state expert used 3M state-only)
+  learning_rate: 0.0001           # 1e-4 (annealed to 0); conservative for CNN stability
+  n_steps: 2048                   # rollout length / env  -> 2048*8 = 16384 transitions/update
+                                  # (uint8 buffer ~0.4GB; float32-on-GPU would be ~13GB)
+  batch_size: 256
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  clip_range_end: 0.05            # annealed
+  n_epochs: 4                     # fewer than the state expert's 10 (standard for pixel PPO)
+  ent_coef: 0.01                  # more exploration than the state expert (0.001)
+  vf_coef: 0.5                    # separate actor/critic encoders -> standard weight
+  max_grad_norm: 0.5
+  target_kl: 0.04                 # KL early stop
+  critic_lr_multiplier: 1.0       # separate encoder; keep critic LR == actor LR
+
+network:
+  feature_dim: 256                # VisionEncoder output (== flow / BC-vision-only)
+  hidden_dim: 256                 # actor/critic MLP head
+  T_obs: 2                        # stacked frames -> 6 input channels
+  action_dim: 4                   # CTBR
+
+logging:
+  tensorboard_log: "./logs/ppo_from_pixels/"
+  save_path: "./checkpoints/ppo_from_pixels/"
+  checkpoint_freq: 200000         # save every N timesteps
+  eval_freq: 100000               # closed-loop eval every N timesteps
+  eval_episodes: 10               # episodes per eval (survival-rate proxy)
+
+quick_test:
+  enabled: false
+  timesteps: 32768                # 2 updates @ n_steps=2048, n_envs=8
