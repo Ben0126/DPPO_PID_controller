@@ -12,6 +12,12 @@ straight from the frozen artifacts (no hand-transcription):
          ~2 m, where the policy actually operates -> precision is information-gated.
          (Phase 3b image-distance-info + OOD coverage.)
 
+  Fig 3  single_seed_swing.png
+         Per-seed Tier-1 / survival of the two P1 baselines (3 seeds each):
+         PPO-from-pixels swings 0% <-> 47% Tier-1 on the training seed alone, so a
+         single-seed leaderboard row is unsafe -> report across-seed mean +/- std.
+         (Sec 4 P1 baselines.)
+
 Usage:
   dppo/Scripts/python.exe -m scripts.make_paper_figures
 """
@@ -167,10 +173,64 @@ def fig2_crosshair_saturation():
     print(f'wrote {out}')
 
 
+def fig3_single_seed_swing():
+    """Single-seed unreliability: per-seed Tier-1 / survival spread of the two P1
+    baselines (3 seeds each), with the across-seed mean +/- std. Numbers read
+    straight from the seed-aggregate artifact (per_seed = fractions 0-1; the
+    *_mean/_std fields are already in percent)."""
+    agg = load('baselines_frozen_seeds_aggregate.json')
+    models = [('PPO_from_pixels', 'PPO-from-pixels\n(end-to-end RL)', '#c0392b'),
+              ('BC_vision_only', 'BC-vision-only\n(vision→action MLP)', '#2c7fb8')]
+
+    fig, (axT, axS) = plt.subplots(1, 2, figsize=(10.0, 4.5), sharey=True)
+
+    def panel(ax, per_key, mean_key, std_key, title):
+        for xi, (mk, _label, col) in enumerate(models):
+            d = agg[mk]
+            seeds = sorted(d['per_seed'].keys(), key=int)
+            vals = [d['per_seed'][s][per_key] * 100.0 for s in seeds]   # frac -> %
+            jit = np.linspace(-0.14, 0.14, len(vals))
+            ax.scatter([xi + j for j in jit], vals, s=78, color=col, alpha=0.55,
+                       edgecolor='k', linewidth=0.6, zorder=3)
+            for j, s, v in zip(jit, seeds, vals):
+                ax.annotate(f's{s}', (xi + j, v), textcoords='offset points',
+                            xytext=(0, 9), ha='center', fontsize=8, color=col)
+            m, sd = d[mean_key], d[std_key]               # already in percent
+            ax.errorbar(xi + 0.32, m, yerr=sd, marker='D', ms=10, color=col,
+                        capsize=6, lw=2.2, zorder=4)
+            ax.annotate(f'{m:.1f} ± {sd:.1f}', (xi + 0.32, m),
+                        textcoords='offset points', xytext=(11, 0), va='center',
+                        fontsize=9.5, fontweight='bold', color=col)
+        ax.set_xticks(range(len(models)))
+        ax.set_xticklabels([l for _, l, _ in models], fontsize=9)
+        ax.set_xlim(-0.55, len(models) - 1 + 0.95)
+        ax.set_ylim(-8, 108)
+        ax.axhline(0, color='k', lw=0.6)
+        ax.set_title(title, fontsize=11)
+
+    panel(axT, 'tier1', 'tier1_mean', 'tier1_std', 'Tier-1 pass-rate')
+    panel(axS, 'survival', 'survival_mean', 'survival_std', 'Survival')
+    axT.set_ylabel('closed-loop % (per seed = dot, mean ± std = diamond)')
+
+    # highlight the PPO-from-pixels Tier-1 swing (seeds 0 & 2 -> 0%, seed 1 -> ~47%)
+    axT.annotate('', xy=(-0.33, 46.7), xytext=(-0.33, 0.0),
+                 arrowprops=dict(arrowstyle='<->', color='#c0392b', lw=1.6))
+    axT.text(-0.26, 26.0, 'same model,\ndifferent seed:\n0% ↔ 47%', color='#c0392b',
+             fontsize=8.5, ha='left', va='center', style='italic')
+
+    fig.suptitle('One training seed is not a safe leaderboard row '
+                 '(P1 baselines, 3 seeds each)', fontsize=12, y=1.0)
+    fig.tight_layout()
+    out = os.path.join(FIGDIR, 'single_seed_swing.png')
+    fig.savefig(out, dpi=200, bbox_inches='tight'); plt.close(fig)
+    print(f'wrote {out}')
+
+
 def main():
     os.makedirs(FIGDIR, exist_ok=True)
     fig1_rank_survival()
     fig2_crosshair_saturation()
+    fig3_single_seed_swing()
     print(f'\nFigures in {FIGDIR}')
 
 

@@ -238,6 +238,18 @@ whereas averaging over seeds raises the all-IAE to 1.41 ± 0.89 m once the survi
 seed's drift is counted. Both baselines stay far below the 17 % ceiling; none is
 deployable.
 
+![Figure 3](figures/single_seed_swing.png)
+
+**Figure 3.** Per-seed Tier-1 pass-rate (left) and survival (right) for the two P1
+baselines, three training seeds each (dots, labelled s0–s2), with the across-seed
+mean ± std (diamond). PPO-from-pixels swings from 0 % (seeds 0, 2 — would read as
+"uniformly collapsed") to 47 % (seed 1) on Tier-1 from the training seed alone
+(15.6 ± 22.0 %), so any single-seed leaderboard row simultaneously over- and
+under-states it; BC-vision-only is comparatively stable (61.1 ± 13.4 %). This seed
+sensitivity is why every retrained model in this work is reported as a three-seed
+mean ± std (`scripts/make_paper_figures.py`,
+`evaluation_results/baselines_frozen_seeds_aggregate.json`).
+
 ---
 
 ## 5. The Core Ablation: Dispersive × E2E (2×2, 3 seeds)
