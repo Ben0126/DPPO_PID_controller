@@ -147,13 +147,10 @@ class QuadrotorVisualEnv(gym.Wrapper):
                 px = np.clip(px, 4, W - 5)
                 py = np.clip(py, 4, H - 5)
 
-                # Draw crosshair (red) with per-episode size perturbation
-                size = max(2, min(6, int(6 / (target_dist + 0.5)) + self._dr_crosshair_d))
-                for d in range(-size, size + 1):
-                    yc = np.clip(py + d, 0, H - 1)
-                    xc = np.clip(px + d, 0, W - 1)
-                    image[yc, px] = [255, 50, 50]
-                    image[py, xc] = [255, 50, 50]
+                # Draw the target marker (size encodes distance). Factored out so
+                # subclasses can swap in a non-saturating / perspective target for
+                # the higher-res sensing gate without touching production behaviour.
+                self._draw_target(image, px, py, target_dist, W, H)
 
         # 4. Altitude indicator (left edge, green bar)
         alt_normalized = np.clip(altitude / 5.0, 0, 1)
@@ -177,6 +174,23 @@ class QuadrotorVisualEnv(gym.Wrapper):
 
         # Convert to CHW format
         return image.transpose(2, 0, 1).copy()
+
+    def _draw_target(self, image: np.ndarray, px: int, py: int,
+                     target_dist: float, W: int, H: int) -> None:
+        """Draw the target crosshair in-place. Size is the ONLY metric-range
+        channel in the FPV observation.
+
+        Production behaviour (default): a quantised crosshair whose half-length is
+        ``max(2, min(6, int(6/(dist+0.5)) + dr))`` — saturates at 2 px beyond ~2 m
+        (see docs/experiment_report_image_distance_info.md). Subclasses override
+        this for the higher-res sensing gate; the rest of the scene is unchanged.
+        """
+        size = max(2, min(6, int(6 / (target_dist + 0.5)) + self._dr_crosshair_d))
+        for d in range(-size, size + 1):
+            yc = np.clip(py + d, 0, H - 1)
+            xc = np.clip(px + d, 0, W - 1)
+            image[yc, px] = [255, 50, 50]
+            image[py, xc] = [255, 50, 50]
 
 
     def _render_depth(self) -> np.ndarray:

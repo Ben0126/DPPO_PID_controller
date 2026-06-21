@@ -279,7 +279,26 @@ Result is **sharper than the pre-registered "mechanism is inert" prediction**:
 2. **The PPO expert can't recover from >2 m offset** (target≠init, 20 trials): 1 m→0.066 m 20/20, 2 m→0.066 m 20/20, **3 m→1.56 m 0/20**. Even a *correct* offset collection caps at ~2 m, below the 2–3 m precision regime.
 3. **The FPV image doesn't encode metric distance** — the only range feature is crosshair `size=max(2,min(6,int(6/(d+0.5))+dr))`. DR-ON: adjacent-distance d-prime **<0.2 everywhere**; ridge decode image→distance R² near(<1 m) **0.41**, far(≥1.5 m) **0.12**. DR-OFF (noiseless ceiling): size = **2 px for all d≥2 m** → renders at 2.0/2.5/3.0 m are **byte-identical** (d′=0). The policy's 2.83 m steady drift sits where the image carries zero range info.
 
-**Verdict: precision is information-gated by the 64×64 FPV observation model, not data-gated.** Explains the ~2.8 m / ~13 %-oracle floor invariant across every config (3c): no representation/data lever can decode a distance the crosshair doesn't encode past 2 m. **The wider-init retrain is NOT recommended** (prediction: cond-IAE stays ~2.8 m); to move precision, change the *observation* (higher-res FPV, explicit range/optical-expansion cue, stereo/depth) — or report the sensing cap as the finding. The direction channel suffices for survival (stay pointed at target), not for metric precision.
+**Verdict (3b-info): the FPV observation does not encode metric range past 2 m.** This was read as "information-gated → change the observation". The sensing ablation below tested that implication by intervention and **refutes it as stated**.
+
+### 3b-sensing — Higher-res gate + range-cue INTERVENTION: "change the observation" REFUTED ✓ DONE (2026-06-21)
+`scripts/measure_higher_res_gate.py` + `scripts/run_p3b_rangecue.py` (→ `train_flow_v5.py --range-cue`, `evaluate_frozen_p0.py --cue-noise`); artifacts `evaluation_results/p3b_higher_res_gate.json`, `p3b_rc_{clean,noised}{,_s12}_frozen.json`; write-up `docs/experiment_report_sensing_ablation.md`.
+
+**(A) Free higher-res gate** (image→distance ridge, dual form, 3 res × 2 targets, DR on): the far-range info loss is a **renderer TARGET ARTIFACT, not the pixel count**. Production saturating crosshair far R²(≥1.5 m) ≈ 0 at 64/128/256 px (resolution alone useless); a non-saturating **perspective target restores far R² to 0.42 at the SAME 64 px** (128→0.50, 256→0.45 — resolution a minor secondary lever). So the 3b-info "64×64 can't encode range" is partly an artifact of the crosshair size formula; even the perspective target's far R² (0.45) ≪ near (0.88), i.e. a better sensor would improve, not solve, far range.
+
+**(B) Range-cue intervention** (fold the metric pos-error the FPV lacks into the v5 task-cond slot — `states[:, :3]`, no re-collection; D0E1 recipe; **3 seeds, frozen P0**; control reuses `p2_D0E1`):
+
+| arm | cue | cond-IAE (mean±std) | survive % | Tier1 % |
+|-----|-----|---------------------:|----------:|--------:|
+| control | — | **2.906 ± 0.075** | 65.0 ± 2.8 | 92.2 ± 3.1 |
+| scalar_clean | ‖pos_err‖ σ=0 | **2.430 ± 0.242** | 58.3 ± 4.9 | 78.9 ± 15.9 |
+| scalar_noised | ‖pos_err‖ σ=0.15 | 2.805 ± 0.258 | 57.9 ± 10.3 | 66.7 ± 31.4 |
+| pos3d_clean | 3D σ=0 | n/a (collapse) | 40.6 ± 3.0 | **6.7 ± 7.2** |
+| pos3d_noised | 3D σ=0.15 | 2.975 ± 0.242 | 53.9 ± 3.2 | 67.8 ± 9.6 |
+
+Even the **oracle** range cue buys only ~0.5 m (2.91→2.43 m, still ~36× oracle 0.068 m) and costs survival; σ=0.15 m noise erases it; the **richer 3D cue reproducibly collapses survival** (Tier1 92→7 %, all 3 seeds). "More sensing → better" is falsified.
+
+**Corrected verdict: precision is NOT sensing-gated.** Supplying metric range (even oracle, even full position) does not restore precision and a richer cue harms survival. The binding constraint is the absence of learned far-range **recovery behaviour** in the 1–3 m band — a coverage/teacher-competence gap (the expert can't recover from >2 m, so it can't label that band), not the observation channel. Moving precision needs a competent far-range teacher to generate 1–3 m coverage; a better sensor or a better policy over the existing data will not. Wider-init retrain stays NOT recommended (cond-IAE prediction unchanged ~2.8 m).
 
 ---
 
@@ -296,10 +315,13 @@ workshop, simulation-only.
 §7 Discussion · §8 Limitations · §9 Conclusion · Reproducibility · **References**.
 Every number traces to a frozen-protocol artifact or diagnostic JSON.
 
-**Figures ✓ DONE (2026-06-18, embedded):** Fig 1 `rank_survival_decoupling.png` (§6.1,
-15× rank swing vs flat survival) and Fig 2 `crosshair_distance_saturation.png` (§6.3,
-range-cue saturation + image→distance R²). Numbers read straight from the artifacts by
-`scripts/make_paper_figures.py` (re-runnable); output in `docs/figures/`.
+**Figures ✓ DONE (2026-06-18; Fig 4 added 2026-06-21):** Fig 1 `rank_survival_decoupling.png`
+(§6.1, 15× rank swing vs flat survival), Fig 2 `crosshair_distance_saturation.png` (§6.3,
+range-cue saturation + image→distance R² — now framed as a *measurement*, not the
+verdict), Fig 3 `single_seed_swing.png` (§4, single-seed unreliability), Fig 4
+`sensing_ablation.png` (§6.3, higher-res gate + range-cue intervention → precision is
+coverage/teacher-competence-gated, not sensing-gated). Numbers read straight from the
+artifacts by `scripts/make_paper_figures.py` (re-runnable); output in `docs/figures/`.
 
 **§2 Related Work + References [1]–[21] ✓ DONE (2026-06-19):** grounded via NotebookLM
 (notebook `generative-rl-flow-policy-rese`). Four threads — generative visuomotor
@@ -361,10 +383,16 @@ std) + folded.
 | `evaluation_results/p3b_image_distance_info{,_nodr}.json` | Phase 3b image-distance-info artifacts (DR on/off) |
 | `docs/experiment_report_image_distance_info.md` | Phase 3b info-gated verdict write-up |
 | `scripts/run_p3b_retrain.py` | Phase 3b wider-init retrain driver (built; NOT recommended to run — info-gated) |
-| `docs/paper_negative_result_draft.md` | **Negative-result paper draft v0.1** — full structure: P0 protocol + P2 ablation + 3a/3b/3c diagnostics + §2 Related Work + References [1]–[21] + Fig 1/2 |
+| `scripts/measure_higher_res_gate.py` | Phase 3b-sensing: free higher-res / target-saturation gate (image→distance R², dual ridge) |
+| `evaluation_results/p3b_higher_res_gate.json` | Phase 3b-sensing higher-res gate artifact |
+| `scripts/run_p3b_rangecue.py` | Phase 3b-sensing: range-cue positive-control ablation driver (5 arms; control reuses p2_D0E1) |
+| `evaluation_results/p3b_rc_{clean,noised}{,_s12}_frozen.json` | Phase 3b-sensing range-cue frozen-P0 results (3 seeds) |
+| `docs/experiment_report_sensing_ablation.md` | Phase 3b-sensing write-up — "change the observation" REFUTED; precision is coverage/competence-gated |
+| `docs/paper_negative_result_draft.md` | **Negative-result paper draft** — full structure: P0 protocol + P2 ablation + 3a/3b/3c diagnostics + §2 Related Work + References [1]–[21] + Fig 1–4. §6.3 revised (2026-06-21): "sensing-gated" → coverage/teacher-competence-gated, via the higher-res gate + range-cue intervention |
 | `scripts/make_paper_figures.py` | Regenerates the paper figures from the JSON artifacts (publication quality) |
 | `docs/figures/rank_survival_decoupling.png` | Fig 1 — rank↔survival decoupling (§6.1) |
-| `docs/figures/crosshair_distance_saturation.png` | Fig 2 — FPV range-cue saturation + image→distance decode (§6.3) |
+| `docs/figures/crosshair_distance_saturation.png` | Fig 2 — FPV range-cue saturation + image→distance decode (§6.3, measurement) |
+| `docs/figures/sensing_ablation.png` | Fig 4 — higher-res gate + range-cue intervention (§6.3, verdict: coverage/teacher-competence-gated) |
 | `scripts/train_bc_vision_only.py` | BC-vision-only lower-bound baseline |
 | `scripts/evaluate_baselines_frozen.py` | Generic frozen rollout for non-flow baselines |
 | `evaluation_results/frozen_p0_leaderboard.json` | Canonical frozen leaderboard |

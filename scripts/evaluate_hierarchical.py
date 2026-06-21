@@ -215,7 +215,8 @@ def build_policy(ckpt_path: str, cfg: dict, n_inference_steps: int, device) -> t
 
 
 def rollout_episode(policy, base_env, visual_env, arch, T_obs, T_action,
-                    n_inference_steps, device, seed=None) -> dict:
+                    n_inference_steps, device, seed=None,
+                    cue_scale=3.0, cue_noise=0.0) -> dict:
     """Run one closed-loop RHC episode and return raw per-step trajectories.
 
     If ``seed`` is given, the episode is made fully reproducible: the gym env
@@ -245,15 +246,32 @@ def rollout_episode(policy, base_env, visual_env, arch, T_obs, T_action,
 
         # Only v5-with-task accepts a task_cond kwarg; v4 predict_action does not.
         extra_kwargs = {}
-        if arch.get('task_dim', 0) > 0:
+        task_dim = arch.get('task_dim', 0)
+        if task_dim > 0:
             R = base_env.dynamics.get_rotation_matrix()
             from envs.quadrotor_dynamics import get_tilt_angle
             tilt_deg = get_tilt_angle(R)
-            pos_err = np.linalg.norm(base_env.target_position - base_env.dynamics.position)
+            pos_err_world = base_env.target_position - base_env.dynamics.position
+            pos_err = np.linalg.norm(pos_err_world)
             ang_vel = np.linalg.norm(base_env.dynamics.ang_velocity)
             is_recovery = float(pos_err > 1.0 or tilt_deg > 15.0 or ang_vel > 2.0)
             is_hover = 1.0 - is_recovery
-            extra_kwargs['task_cond'] = torch.tensor([[is_hover, is_recovery]], device=device)
+            tc = [is_hover, is_recovery]
+            # Phase 3b range-cue arms (task_dim > 2): fold in the metric position
+            # error the FPV cannot encode, matching train_flow_v5's cue exactly
+            # (raw metres / cue_scale, body frame for pos3d; + sensor noise).
+            cue_dim = task_dim - 2
+            if cue_dim == 1:        # scalar ||pos_err|| (frame-invariant)
+                cue = np.array([pos_err], dtype=np.float32)
+            elif cue_dim == 3:      # pos_err_body = R.T @ (target - pos)
+                cue = (R.T @ pos_err_world).astype(np.float32)
+            else:
+                cue = np.zeros(cue_dim, dtype=np.float32)
+            cue = cue / cue_scale
+            if cue_noise > 0:
+                cue = cue + np.random.randn(cue_dim).astype(np.float32) * (cue_noise / cue_scale)
+            tc = tc + cue.tolist()
+            extra_kwargs['task_cond'] = torch.tensor([tc], device=device)
 
         with torch.no_grad():
             action_seq = policy.predict_action(

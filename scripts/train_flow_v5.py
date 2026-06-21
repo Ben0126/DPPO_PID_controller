@@ -55,9 +55,22 @@ class FlowDatasetV5(Dataset):
 
     def __init__(self, sources: list, obs_rms: RunningMeanStd,
                  T_obs: int = 2, T_pred: int = 8,
-                 hover_only: bool = False):
+                 hover_only: bool = False,
+                 range_cue_mode: str = 'none', cue_scale: float = 3.0):
         self.T_obs  = T_obs
         self.T_pred = T_pred
+        # Phase 3b range-cue positive control. The cue is the metric position
+        # error the 64x64 FPV cannot encode past ~2 m (docs/experiment_report_
+        # image_distance_info.md). It is FOLDED into the existing task-cond slot,
+        # so the model concats it into global_cond unchanged (task_dim widens).
+        #   'none'   -> cue_dim 0 (identical to the D0E1 frontier recipe)
+        #   'scalar' -> cue_dim 1: ||pos_err_body|| / cue_scale
+        #   'pos3d'  -> cue_dim 3: pos_err_body / cue_scale  (range + direction)
+        # Clean cue is stored here; sensor noise (noised arms) is added at use.
+        assert range_cue_mode in ('none', 'scalar', 'pos3d')
+        self.range_cue_mode = range_cue_mode
+        self.cue_scale = cue_scale
+        self.cue_dim = {'none': 0, 'scalar': 1, 'pos3d': 3}[range_cue_mode]
 
         img_buf, imu_buf, act_buf, tilt_buf, state_buf, task_buf = [], [], [], [], [], []
         skipped_count = 0
@@ -92,7 +105,16 @@ class FlowDatasetV5(Dataset):
                         tilt_buf.append(np.float32(np.arccos(np.clip(r2z, -1.0, 1.0))))
                         # Normalise full 15D state with PPO obs_rms
                         state_buf.append(obs_rms.normalize(s).astype(np.float32))
-                        task_buf.append(task_label)
+                        # Range cue from RAW (metres) body-frame pos error s[0:3].
+                        if self.cue_dim == 0:
+                            task_buf.append(task_label)
+                        else:
+                            if self.range_cue_mode == 'scalar':
+                                cue = np.array([np.linalg.norm(s[0:3])], dtype=np.float32)
+                            else:  # pos3d
+                                cue = s[0:3].astype(np.float32)
+                            cue = cue / self.cue_scale
+                            task_buf.append(np.concatenate([task_label, cue]))
 
         self._img_arr   = np.stack(img_buf)
         self._imu_arr   = np.stack(imu_buf)
@@ -231,11 +253,17 @@ def train(args):
 
     train_ds = FlowDatasetV5(train_sources, obs_rms,
                              T_obs=T_obs, T_pred=T_pred,
-                             hover_only=args.hover_only)
+                             hover_only=args.hover_only,
+                             range_cue_mode=args.range_cue, cue_scale=args.cue_scale)
     val_ds   = FlowDatasetV5(val_sources, obs_rms,
                              T_obs=T_obs, T_pred=T_pred,
-                             hover_only=args.hover_only)
+                             hover_only=args.hover_only,
+                             range_cue_mode=args.range_cue, cue_scale=args.cue_scale)
     print(f"Train samples: {len(train_ds):,}  |  Val samples: {len(val_ds):,}")
+    cue_dim = train_ds.cue_dim
+    if cue_dim:
+        print(f"[range-cue] mode={args.range_cue} cue_dim={cue_dim} scale={args.cue_scale} "
+              f"noise(m)={args.cue_noise}  -> task_dim={2 + cue_dim}")
 
     nw = train_cfg['num_workers']
     train_loader = DataLoader(
@@ -272,7 +300,7 @@ def train(args):
         cross_attn_heads       = xattn_cfg.get('n_heads', 8),
         state_predictor_hidden = sp_cfg.get('hidden_dim', 256),
         state_dim              = sp_cfg.get('state_dim', 15),
-        task_dim               = 2,
+        task_dim               = 2 + cue_dim,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -361,6 +389,13 @@ def train(args):
             tilt_gt  = tilt_gt.to(device, non_blocking=True)
             state_gt = state_gt.to(device, non_blocking=True)
             task_cond = task_cond.to(device, non_blocking=True)
+            # Noised range-cue arms: add sensor noise to the cue columns (trailing
+            # cue_dim) each minibatch -> resampled augmentation. sigma is in metres,
+            # cue is stored as metres/cue_scale, so divide sigma by cue_scale.
+            if cue_dim and args.cue_noise > 0:
+                noise = torch.randn(task_cond.shape[0], cue_dim, device=device) \
+                    * (args.cue_noise / args.cue_scale)
+                task_cond[:, 2:] = task_cond[:, 2:] + noise
 
             images = gpu_augment(images) / 255.0
 
@@ -472,6 +507,14 @@ if __name__ == '__main__':
     parser.add_argument('--freeze-vision', action='store_true',
                         help='Freeze vision_encoder weights; train only flow_net + cross_attn '
                              '(Stage D: re-align action head to OOB-pretrained features)')
+    parser.add_argument('--range-cue', type=str, default='none',
+                        choices=['none', 'scalar', 'pos3d'],
+                        help='Phase 3b positive control: fold metric pos-error into '
+                             'task-cond. none=D0E1 frontier; scalar=||pos_err||; pos3d=pos_err')
+    parser.add_argument('--cue-noise', type=float, default=0.0,
+                        help='sensor noise std (metres) added to the range cue (noised arms)')
+    parser.add_argument('--cue-scale', type=float, default=3.0,
+                        help='divide the metric cue by this so it is ~O(1)')
     parser.add_argument('--lambda-disp', type=float, default=0.05,
                         help='Dispersive loss weight (default: 0.05; set 0.0 to disable '
                              '— the Dispersive OFF arm of the P2 ablation)')

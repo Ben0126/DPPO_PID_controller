@@ -25,16 +25,20 @@ Reaching even this null verdict required a protocol hardened against **single-se
 noise**: our own from-pixels PPO baseline swings between a 0 % and 47 % Tier-1 pass-rate
 on the training seed alone, so we report every retrained model as an **across-seed
 mean ± std** rather than a single leaderboard row.
-We then diagnose *why*, with three observation-only measurements that require no
-retraining: (i) Dispersive does not cure collapse — it **games its own objective**,
-inflating feature norm ~287× while the intrinsic rank gets *worse* (effective rank
-9→2), and closed-loop survival is **decoupled** from that rank (a 15× rank swing leaves
-survival flat); (ii) the only real survival mover is a transfer/conditioning/recovery
-**recipe**, not Dispersive; (iii) task precision is capped not by representation or data
-coverage but by the **observation model itself** — the 64×64 FPV cannot encode metric
-range beyond ~2 m, which is exactly where the policy operates. We conclude that for this
-class of task, representation collapse is not the binding constraint; the sensing
-channel is. We release the protocol and all diagnostics.
+We then diagnose *why*: (i) Dispersive does not cure collapse — it **games its own
+objective**, inflating feature norm ~287× while the intrinsic rank gets *worse*
+(effective rank 9→2), and closed-loop survival is **decoupled** from that rank (a 15×
+rank swing leaves survival flat); (ii) the only real survival mover is a
+transfer/conditioning/recovery **recipe**, not Dispersive; (iii) precision is gated
+neither by representation nor by sensing. Although the 64×64 FPV cannot encode metric
+range beyond ~2 m, a renderer gate shows that loss is a fixable target artifact (a
+non-saturating target restores it at 64 px), and a positive-control **intervention**
+settles it: *handing the policy the oracle metric position error barely moves precision*
+(~36× the state oracle) and a richer cue **collapses survival** — so precision is capped
+by the absence of a learned far-range recovery behaviour (a coverage / teacher-competence
+gap), not by the observation channel. We conclude that for this class of task neither
+representation collapse nor sensing is the binding constraint. We release the protocol,
+the intervention, and all diagnostics.
 
 ---
 
@@ -65,7 +69,10 @@ three contributions:
 2. **A pre-registered 2×2 falsification** (three seeds per cell) of the Dispersive-Loss
    hypothesis, including a byte-identical no-op control.
 3. **A mechanistic diagnosis** separating the three candidate bottlenecks
-   (representation, data coverage, sensing) and localising the real one.
+   (representation, data coverage, sensing) and localising the real one — including a
+   positive-control *intervention* that hands the policy the oracle sensing signal and
+   shows it does **not** restore precision, isolating the teacher's far-range
+   incompetence as the binding constraint.
 
 This is a negative result, but a constructive one: it redirects effort from
 representation regularisation to the observation model.
@@ -126,8 +133,9 @@ Swift system [21] beats human champions at drone racing with deep RL on a vision
 policy. A common thread is decoupling perception from control via a privileged teacher —
 the same paradigm as our state-based PPO oracle (§3). Relative to these
 agility/navigation results, our task isolates a different axis: closed-loop *hover
-precision* under an information-poor monocular observation, which is where our sensing
-bottleneck (§6.3) emerges.
+precision* under an information-poor monocular observation — where, by intervention
+(§6.3), the binding constraint turns out to be the privileged teacher's own
+incompetence in the operating regime, not the sensing channel.
 
 ---
 
@@ -291,8 +299,10 @@ oracle): **nothing is deployable.**
 ## 6. Diagnosis: Which Bottleneck?
 
 Three candidate explanations for the flat result: representation (the thing Dispersive
-targets), data coverage, or sensing. We test each with observation-only measurements
-(no retraining).
+targets), data coverage, or sensing. We test the first two with observation-only
+measurements (no retraining), and the third with both a renderer gate and a
+positive-control **intervention** that hands the policy the very signal it is presumed to
+lack (§6.3).
 
 ### 6.1 Representation: Dispersive games its objective; survival ⟂ rank
 
@@ -349,7 +359,7 @@ mix), and it holds with a **frozen** encoder — so it is not from E2E. E2E adds
 Tier-1-only bump that neither extends survival nor improves precision. Dispersive adds
 nothing. **Mover ranking: recipe ≫ E2E ≫ Dispersive ≈ 0.**
 
-### 6.3 Precision is sensing-limited, not data- or representation-limited
+### 6.3 Precision is coverage/teacher-competence-limited, not sensing-limited
 
 cond-IAE is ~2.8 m (~13 % oracle) for *every* configuration. Why won't precision move?
 
@@ -361,7 +371,8 @@ samples lie above the training p99; **25 %** above the training maximum (zero-co
 The policy lives where it has ~no labels — a real coverage gap, *consistent* with either
 a data limit or a sensing limit.
 
-**Is it data-gated or information-gated?** Three observation-only checks settle it:
+**Is the coverage gap data-fixable, and does the FPV even encode range?** Three
+observation-only checks bear on it:
 1. **Widening the recovery init does not change coverage.** The env anchors
    `target = init_pos` for hover, so a wider `--pos-range` just relocates the hover
    point; a freshly collected ±3 m dataset has *identical* position-error coverage to
@@ -379,11 +390,11 @@ a data limit or a sensing limit.
    only normalised direction (range-invariant).
 
 The policy's 2.83 m steady drift sits exactly where the observation carries **no
-recoverable metric range**. **Precision is information-gated by the 64×64 FPV
-observation model**, not by representation or data coverage. The direction channel is
-enough to stay pointed at the target (survival); it is not enough to null metric range
-(precision). A wider-init BC retrain is therefore predicted to leave cond-IAE at ~2.8 m
-and is not pursued.
+recoverable metric range** (Figure 2). It is tempting to stop here and call precision
+*information-gated by the observation model* — the conclusion of an earlier draft. But a
+measurement that the FPV does not encode range does not establish that the missing range
+is the *binding* cause of imprecision. We test that implication directly with a renderer
+gate and a positive-control intervention, and **both refute it**.
 
 ![Figure 2](figures/crosshair_distance_saturation.png)
 
@@ -392,7 +403,55 @@ and is not pursued.
 uninformative even nearer, and with DR off (dashed) renders at 2.0/2.5/3.0 m are
 byte-identical. The policy's steady-state drift (green, median 2.83 m) sits inside the
 saturated region. *Right:* a linear decode of distance from the image succeeds near
-(R²=0.41, <1 m) but fails far (R²=0.12, ≥1.5 m). Precision is information-gated.
+(R²=0.41, <1 m) but fails far (R²=0.12, ≥1.5 m). This is a *measurement* of the
+observation, not the binding cause of imprecision (Figure 4).
+
+**The information loss is a renderer artifact, not the pixel count (gate).** Before
+treating "richer sensing" as the fix, we ask whether a more capable monocular renderer
+would even *carry* the far-range information (`measure_higher_res_gate.py`; **Figure 4,
+left**). Decoding distance from the image across {64, 128, 256} px × {production
+saturating crosshair, perspective non-saturating target}, the saturating crosshair's
+far-range R² is ≈ 0 at *every* resolution (−0.01 / 0.11 / 0.04) — raising resolution
+alone does nothing — whereas a perspective (optical-expansion) target lifts far R² to
+**0.42 at the same 64 px** (0.50 / 0.45 at 128 / 256 px). So the §6.3 measurement is
+partly an artifact of this synthetic renderer's quantised crosshair, fixable without any
+resolution change; even so, the perspective target's far R² (0.45) ≪ its near R² (0.88),
+so a richer sensor would *improve*, not solve, far-range precision.
+
+**Even the oracle range cue does not move precision (intervention).** The decisive test
+supplies the missing channel directly: we fold the metric body-frame position error the
+FPV cannot encode (`states[:, :3]`, computed from the existing data — no re-collection)
+into the policy's conditioning, retrain the D0E1 frontier recipe unchanged, and re-eval
+under the frozen protocol (3 seeds; control = the no-cue D0E1; **Figure 4, right**).
+Handed the *oracle* metric range (scalar ‖pos-err‖, σ=0), cond-IAE moves only
+2.91 → **2.43 m** — still ~36× the 0.068 m state oracle, and bought with −6.7 pp survival
+/ −13 pp Tier-1. A realisable sensor (σ=0.15 m) erases even that (2.81 m ≈ control). The
+*richer* full 3-D position cue is actively harmful: it **collapses survival across all
+three seeds** (Tier-1 92 → 7 %, surviving to the 250-step threshold in ≈2/30 episodes),
+so its conditional precision is an artifact, not a win. Supplying range tells the drone
+*how far off* it is, but not *what to do* about it — and no demonstration in the 1–3 m
+band teaches that.
+
+**Verdict: precision is not sensing-gated.** Range information — even oracle, even full
+position — does not restore precision, and a richer cue harms survival. The binding
+constraint is the absence of a learned far-range *recovery behaviour* in the 1–3 m band:
+the BC data has no labels there (coverage gap, above) and the teacher cannot generate
+them (the expert itself crashes from > 2 m, check 2). Moving precision would require a
+*competent far-range teacher* to generate 1–3 m coverage — not a better sensor, not a
+better policy over the existing data, and not representation regularisation. A wider-init
+BC retrain is therefore still predicted to leave cond-IAE at ~2.8 m and is not pursued.
+
+![Figure 4](figures/sensing_ablation.png)
+
+**Figure 4.** *Left (gate):* far-range (≥1.5 m) image→distance R² for three resolutions ×
+two target renderers. The saturating production crosshair is uninformative at every
+resolution (raising pixels does nothing); a non-saturating perspective target restores
+~half the far-range information already at 64 px — the loss is a target artifact, not the
+pixel count. *Right (intervention):* closed-loop precision (cond-IAE, 3 seeds) when the
+policy is *handed* the metric position error the FPV lacks. Even the oracle scalar range
+(σ=0) leaves precision ~36× the state oracle (green dashed, 0.068 m); sensor noise erases
+the gain; the richer 3-D cue (σ=0) collapses survival (hatched; conditional IAE
+unreliable). Precision is coverage/teacher-competence-gated, not sensing-gated.
 
 ---
 
@@ -408,22 +467,35 @@ the feature the policy actually conditions on, and use a scale-invariant criteri
 automatically the right lever for closed-loop control — the binding constraint must be
 located empirically.
 
-**What is specific.** The sensing conclusion (§6.3) is specific to this synthetic FPV
-renderer, whose distance cue is a quantised crosshair size. A real or richer renderer
-(higher resolution, optical-expansion / looming cues, stereo, or depth) might carry
-range and change the precision story — which is exactly the recommended next direction.
+**What is specific.** The precision diagnosis (§6.3) is specific to a setting whose
+privileged teacher saturates inside the operating regime: our state-based PPO oracle
+itself crashes from > 2 m offset, so it cannot label the 1–3 m band where the policy
+drifts. A task with a teacher competent over the full error range — or a renderer whose
+distance cue is not the quantised crosshair we found to be artifactually saturating —
+could place the bottleneck elsewhere.
 
-**Constructive implication.** To improve metric precision, change the *observation*, not
-the policy: higher-resolution FPV, an explicit range/optical-expansion cue, or
-stereo/depth. Representation regularisation and wider BC coverage are predicted not to
-help while the sensing cap holds.
+**Constructive implication.** Improving metric precision here is neither a representation
+nor a sensing problem: our intervention shows that even the *oracle* range, handed
+directly to the policy, barely moves precision and a richer cue collapses survival
+(§6.3). The lever is the *teacher and its coverage* — a controller that recovers from
+multi-metre offsets, generating 1–3 m demonstrations to imitate. A better sensor would
+help only once such recovery behaviour exists to be conditioned on; absent it, higher
+resolution, stereo/depth, representation regularisation, and wider naive BC coverage are
+all predicted not to move the ~2.8 m floor.
 
 ---
 
 ## 8. Limitations
 
 - **Simulation only**; no real-robot validation. The renderer is synthetic and its
-  distance encoding is a design choice (a deliberately information-poor monocular cue).
+  distance encoding is a design choice (a deliberately information-poor monocular cue) —
+  though the §6.3 intervention controls for this by handing the policy the oracle range
+  directly, so the precision conclusion does not hinge on the renderer's information
+  content.
+- The precision verdict is **conditional on the teacher**: our state-based PPO oracle
+  itself crashes from > 2 m offset, so "coverage/teacher-competence-gated" is established
+  for *this* teacher; a controller competent over the full error range is the untested
+  lever and the recommended next step.
 - **One task** (hover) and one policy family (flow matching with IMU-vision cross-
   attention). The Dispersive null result is established for `vis_pooled`; we did not
   exhaustively sweep λ, the feature it is applied to, or alternative dispersion
@@ -444,11 +516,14 @@ noise, and is a byte-identical no-op without an end-to-end encoder. The mechanis
 not even cure the collapse it targets — it games its scale-sensitive objective and
 worsens intrinsic rank — and closed-loop survival is decoupled from that representation
 geometry entirely. The real levers are elsewhere: a transfer/conditioning/recovery
-recipe accounts for the survival gains, and **task precision is capped by the
-observation model**, which cannot encode metric range past ~2 m — exactly where the
-policy operates. Representation collapse is not the binding constraint for this task;
-the sensing channel is. We release the protocol, the ablation, and all diagnostics so
-the result and its diagnosis are reproducible.
+recipe accounts for the survival gains, and **task precision is capped by the teacher's
+incompetence in the operating regime**, not by sensing: a positive-control intervention
+that hands the policy the oracle metric position error barely moves precision (~36× the
+state oracle) and a richer cue collapses survival, and the FPV's apparent range-blindness
+is itself a fixable renderer artifact. Neither representation collapse nor the sensing
+channel is the binding constraint for this task; the missing far-range recovery behaviour
+is. We release the protocol, the ablation, the intervention, and all diagnostics so the
+result and its diagnosis are reproducible.
 
 ---
 
@@ -463,6 +538,8 @@ the result and its diagnosis are reproducible.
 | §6.2 survival movers | — | `docs/experiment_report_survival_movers.md` |
 | §6.3 coverage probe | `scripts/measure_ood_coverage.py` | `evaluation_results/p3b_ood_coverage.json` — `docs/experiment_report_ood_coverage.md` |
 | §6.3 image-distance info | `scripts/measure_image_distance_info.py` | `evaluation_results/p3b_image_distance_info{,_nodr}.json` — `docs/experiment_report_image_distance_info.md` |
+| §6.3 higher-res gate (Fig 4 left) | `scripts/measure_higher_res_gate.py` | `evaluation_results/p3b_higher_res_gate.json` — `docs/experiment_report_sensing_ablation.md` |
+| §6.3 range-cue intervention, 3 seeds (Fig 4 right) | `scripts/run_p3b_rangecue.py` (→ `train_flow_v5.py --range-cue`, `evaluate_frozen_p0.py --cue-noise`) | `evaluation_results/p3b_rc_{clean,noised}{,_s12}_frozen.json` — `docs/experiment_report_sensing_ablation.md` |
 
 Frozen protocol: 30 episodes, base seed 12345, σ = 2.0 exp-decay composite, paired init,
 conditional-IAE over episodes surviving ≥ 250/500 steps, bootstrap 95% CI, measured PPO

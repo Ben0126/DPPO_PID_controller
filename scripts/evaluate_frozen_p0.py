@@ -114,7 +114,7 @@ def _aggregate_frozen(per_ep, n_episodes, base_seed, survive_threshold, arch_tag
 
 def evaluate_frozen(ckpt_path, n_episodes, base_seed, survive_threshold,
                     quadrotor_config, flow_config, n_inference_steps,
-                    sigma, device_str='cuda'):
+                    sigma, device_str='cuda', cue_scale=3.0, cue_noise=0.0):
     """Evaluate one checkpoint under the frozen protocol; returns aggregate + per-ep."""
     device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
     with open(flow_config, 'r', encoding='utf-8') as f:
@@ -134,7 +134,8 @@ def evaluate_frozen(ckpt_path, n_episodes, base_seed, survive_threshold,
     for ep in range(n_episodes):
         seed = base_seed + ep
         roll = rollout_episode(policy, base_env, visual_env, arch,
-                               T_obs, T_action, n_inference_steps, device, seed=seed)
+                               T_obs, T_action, n_inference_steps, device, seed=seed,
+                               cue_scale=cue_scale, cue_noise=cue_noise)
         m = compute_hierarchical_metrics(roll['positions'], roll['targets'],
                                          roll['omegas'], roll['ep_length'], max_steps)
         m.update(composite_score(m, sigma=sigma))
@@ -255,6 +256,11 @@ def main():
     parser.add_argument('--oracle-score', type=float, default=0.85,
                         help='FALLBACK oracle composite score used only when --oracle-ckpt is NOT '
                              'given (legacy ~0.85 ref). Set <=0 to disable the %Oracle column.')
+    parser.add_argument('--cue-scale', type=float, default=3.0,
+                        help='Phase 3b range-cue: metric cue divisor (must match training; default 3.0)')
+    parser.add_argument('--cue-noise', type=float, default=0.0,
+                        help='Phase 3b range-cue: sensor noise std (metres) added to the cue at eval '
+                             '(match the noised training arm)')
     parser.add_argument('--output', default='evaluation_results/frozen_p0_leaderboard.json')
     args = parser.parse_args()
 
@@ -280,7 +286,8 @@ def main():
         try:
             agg = evaluate_frozen(path, args.n_episodes, args.base_seed,
                                   args.survive_threshold, args.quadrotor_config,
-                                  args.flow_config, args.n_inference_steps, args.sigma)
+                                  args.flow_config, args.n_inference_steps, args.sigma,
+                                  cue_scale=args.cue_scale, cue_noise=args.cue_noise)
             agg['label'] = label
             agg['path'] = path
             results[label] = agg

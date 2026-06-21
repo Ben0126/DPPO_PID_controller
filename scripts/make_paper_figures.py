@@ -165,10 +165,124 @@ def fig2_crosshair_saturation():
     axB.set_title('Range is not recoverable far', fontsize=11)
     axB.axhline(0, color='k', lw=0.8)
 
-    fig.suptitle('Precision is information-gated: the FPV cannot encode range where the policy operates',
-                 fontsize=11.5, y=1.04)
+    fig.suptitle('Measurement: the FPV cannot encode metric range where the policy operates '
+                 '(but see Fig. 4 — this is a fixable artifact, and range is not what gates precision)',
+                 fontsize=10.5, y=1.04)
     fig.tight_layout()
     out = os.path.join(FIGDIR, 'crosshair_distance_saturation.png')
+    fig.savefig(out, dpi=200, bbox_inches='tight'); plt.close(fig)
+    print(f'wrote {out}')
+
+
+def _rangecue_agg():
+    """Aggregate cond-IAE / survival / Tier-1 per range-cue arm across the 3 seeds,
+    reading the four frozen-P0 artifacts (s0 + s12, clean + noised)."""
+    files = ['p3b_rc_clean_frozen.json', 'p3b_rc_noised_frozen.json',
+             'p3b_rc_clean_s12_frozen.json', 'p3b_rc_noised_s12_frozen.json']
+    data = {}
+    for f in files:
+        d = load(f)
+        res = d.get('results', d)   # frozen-P0 JSONs key labels at top level
+        for lbl, v in res.items():
+            if isinstance(v, dict) and 'iae_steady_cond' in v:
+                data[lbl] = v
+
+    def arm_of(lbl):
+        base = lbl
+        for suf in ('_s1', '_s2'):
+            if lbl.endswith(suf):
+                base = lbl[:-3]
+        return 'control' if base == 'control' else base
+
+    arms = {}
+    for lbl, v in data.items():
+        arms.setdefault(arm_of(lbl), []).append(v)
+    out = {}
+    for arm, vs in arms.items():
+        iae = np.array([x['iae_steady_cond'] for x in vs], float)
+        ncond = np.array([x['n_conditional'] for x in vs], float)
+        tier1 = float(np.mean([x['tier1_pass_rate'] for x in vs])) * 100
+        # "collapse": the arm barely flies to the 250-step threshold, so its
+        # conditional cond-IAE is a short-survival artifact, not precision.
+        collapsed = bool(tier1 < 15.0 or np.nanmean(ncond) < 8.0)
+        out[arm] = {
+            'iae_mean': float(np.nanmean(iae)) if not np.all(np.isnan(iae)) else np.nan,
+            'iae_std': float(np.nanstd(iae)) if not np.all(np.isnan(iae)) else np.nan,
+            'tier1_mean': tier1,
+            'survive_mean': float(np.mean([x['survival_mean'] for x in vs])) * 100,
+            'ncond_mean': float(np.nanmean(ncond)),
+            'collapsed': collapsed,
+            'n': len(vs),
+        }
+    return out
+
+
+def fig4_sensing_ablation():
+    """Panel A: higher-res gate — far-range R² for 3 resolutions x {saturating crosshair,
+    perspective target}; the info loss is a target artifact, not the pixel count.
+    Panel B: range-cue intervention — even the oracle metric range barely moves cond-IAE
+    (vs the 0.068 m oracle), noise erases it, and the richer 3D cue collapses survival."""
+    gate = load('p3b_higher_res_gate.json')['results']
+    rc = _rangecue_agg()
+
+    fig, (axA, axB) = plt.subplots(1, 2, figsize=(11.0, 4.4),
+                                   gridspec_kw={'width_ratios': [1.05, 1.25]})
+
+    # --- Panel A: gate far R^2 ---
+    res = [64, 128, 256]
+    cross = [gate[f'{r}px/crosshair_prod']['r2_far_>=1.5m'] for r in res]
+    persp = [gate[f'{r}px/perspective_aa']['r2_far_>=1.5m'] for r in res]
+    x = np.arange(len(res)); w = 0.38
+    bC = axA.bar(x - w/2, cross, w, color='#c0392b', edgecolor='k', alpha=0.85,
+                 label='production crosshair (saturating)')
+    bP = axA.bar(x + w/2, persp, w, color='#27ae60', edgecolor='k', alpha=0.85,
+                 label='perspective target (non-saturating)')
+    for bars in (bC, bP):
+        for b in bars:
+            axA.text(b.get_x() + b.get_width()/2, max(b.get_height(), 0) + 0.02,
+                     f'{b.get_height():.2f}', ha='center', va='bottom', fontsize=9)
+    axA.axhline(0, color='k', lw=0.8)
+    axA.set_xticks(x); axA.set_xticklabels([f'{r}px' for r in res])
+    axA.set_ylabel('R²  decode far range (≥1.5 m) from image')
+    axA.set_ylim(-0.1, 0.7)
+    axA.set_title('Gate: far-range info is a target artifact,\nnot the pixel count', fontsize=10.5)
+    axA.legend(loc='upper left', fontsize=8.3, framealpha=0.9)
+
+    # --- Panel B: range-cue intervention cond-IAE ---
+    order = [('control', 'control\n(no cue)'),
+             ('scalar_clean', 'scalar\nσ=0'),
+             ('scalar_noised', 'scalar\nσ=0.15'),
+             ('pos3d_noised', 'pos3d\nσ=0.15'),
+             ('pos3d_clean', 'pos3d\nσ=0')]
+    xs = np.arange(len(order))
+    means = [rc[a]['iae_mean'] for a, _ in order]
+    stds = [rc[a]['iae_std'] for a, _ in order]
+    cols = ['#2c3e50', '#2c7fb8', '#7fb3d5', '#e67e22', '#c0392b']
+    for xi, (a, _), m, sd, c in zip(xs, order, means, stds, cols):
+        if rc[a]['collapsed']:   # pos3d_clean: short-survival artifact, cond-IAE unreliable
+            axB.bar(xi, 3.2, 0.6, color=c, alpha=0.28, edgecolor=c, hatch='//', zorder=2)
+            axB.text(xi, 1.7, f"survival\ncollapse\nTier-1 {rc[a]['tier1_mean']:.0f}%\n"
+                              f"(n_cond≈{rc[a]['ncond_mean']:.0f}/30)",
+                     ha='center', va='center', fontsize=8.0, color=c, fontweight='bold')
+        else:
+            axB.bar(xi, m, 0.6, yerr=sd, capsize=4, color=c, edgecolor='k',
+                    alpha=0.88, zorder=2)
+            axB.text(xi, m + sd + 0.06, f'{m:.2f}', ha='center', va='bottom',
+                     fontsize=9.5, fontweight='bold')
+    axB.axhline(0.068, color='#16a085', lw=2, ls='--', zorder=3)
+    axB.text(len(order) - 0.5, 0.16, 'state oracle 0.068 m', color='#16a085',
+             fontsize=9, ha='right', va='bottom')
+    axB.set_xticks(xs); axB.set_xticklabels([l for _, l in order], fontsize=9)
+    axB.set_ylabel('cond-IAE (m)  — closed-loop precision')
+    axB.set_ylim(0, 3.6)
+    axB.set_title('Intervention: even the oracle range cue does not move precision\n'
+                  '(~36× oracle); noise erases it; richer cue collapses survival',
+                  fontsize=10.0)
+
+    fig.suptitle('Precision is coverage/teacher-competence-gated, not sensing-gated',
+                 fontsize=12, y=1.03)
+    fig.tight_layout()
+    out = os.path.join(FIGDIR, 'sensing_ablation.png')
     fig.savefig(out, dpi=200, bbox_inches='tight'); plt.close(fig)
     print(f'wrote {out}')
 
@@ -231,6 +345,7 @@ def main():
     fig1_rank_survival()
     fig2_crosshair_saturation()
     fig3_single_seed_swing()
+    fig4_sensing_ablation()
     print(f'\nFigures in {FIGDIR}')
 
 
