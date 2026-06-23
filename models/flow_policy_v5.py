@@ -186,7 +186,10 @@ class FlowMatchingPolicyV5(nn.Module):
     @staticmethod
     def _dispersive_loss(features: torch.Tensor) -> torch.Tensor:
         """
-        Forces all feature vectors in a batch to repel each other.
+        LEGACY (pre-2026-06-22) hand-rolled log-distance repulsion, applied to the
+        off-action-path ``vis_pooled``. Retained only for reproducing the original
+        P2 ablation and `measure_feature_collapse.py`. NOT faithful to [13]/[14];
+        use ``_dispersive_loss_infonce`` on a flow-net intermediate for new work.
         L_disp = -mean( log(||fi - fj|| + ε) )  for i ≠ j
         """
         B = features.shape[0]
@@ -197,6 +200,28 @@ class FlowMatchingPolicyV5(nn.Module):
         mask = 1 - torch.eye(B, device=features.device)
         loss = -torch.log(dist + 1e-6) * mask
         return loss.sum() / (B * (B - 1))
+
+    @staticmethod
+    def _dispersive_loss_infonce(features: torch.Tensor, tau: float = 0.5) -> torch.Tensor:
+        """
+        Faithful Dispersive Loss — InfoNCE-L2 variant of Wang & He (arXiv:2506.09027),
+        matching the OFFICIAL reference implementation (github.com/raywang4/DispLoss),
+        not just the paper's Algorithm 1:
+            D     = ||z_i - z_j||^2 / d        # per-dimension normalised squared L2
+            L_disp = log E_{i,j}[ exp( -D / tau ) ]
+        The `/ d` (flattened feature dim) is in the official code but OMITTED from the
+        paper's printed Algorithm 1; without it the loss saturates (exp(-O(d)/tau)->0,
+        zero gradient) on GroupNorm'd flat features. The i=j diagonal (D=0 -> exp(0)=1)
+        is intentionally kept, matching the reference's full-BxB-matrix mean.
+        Applied to the generative network's intermediate (flow-net mid-block) features.
+        Default tau=0.5 per [13]/[14]; temperature is robust over a wide range [13, Tab.4].
+        """
+        B = features.shape[0]
+        if B < 2:
+            return features.sum() * 0.0
+        d = features.shape[1]
+        D = (torch.cdist(features, features, p=2) ** 2) / d     # (B, B) per-dim squared L2
+        return torch.log(torch.exp(-D / tau).mean())
 
     # ------------------------------------------------------------------
     # Training
@@ -215,6 +240,8 @@ class FlowMatchingPolicyV5(nn.Module):
         state_loss_type: str = 'mse',
         task_cond: Optional[torch.Tensor] = None,
         lambda_dispersive: float = 0.0,
+        dispersive_target: str = 'vis_pooled',
+        dispersive_tau: float = 0.5,
     ):
         """
         Args:
@@ -239,14 +266,23 @@ class FlowMatchingPolicyV5(nn.Module):
         x_t = (1.0 - t_expand) * actions + t_expand * eps
         v_target = eps - actions
 
-        v_pred = self.flow_net(x_t, self._t_to_int(t), global_cond)
+        need_mid = lambda_dispersive > 0.0 and dispersive_target == 'flow_mid'
+        flow_out = self.flow_net(x_t, self._t_to_int(t), global_cond, return_mid=need_mid)
+        v_pred, mid_feat = flow_out if need_mid else (flow_out, None)
         flow_loss = F.mse_loss(v_pred, v_target)
 
         total = flow_loss
         components = {'flow_loss': flow_loss.detach()}
 
         if lambda_dispersive > 0.0:
-            l_disp = self._dispersive_loss(vis_pooled) * lambda_dispersive
+            if dispersive_target == 'flow_mid':
+                # Faithful to Dispersive Loss [13] / D2PPO [14]: InfoNCE-L2 on the
+                # generative network's intermediate (mid-block) representation.
+                l_disp = self._dispersive_loss_infonce(
+                    mid_feat.flatten(1), dispersive_tau) * lambda_dispersive
+            else:
+                # Legacy off-path placement (hand-rolled log-distance on vis_pooled).
+                l_disp = self._dispersive_loss(vis_pooled) * lambda_dispersive
             total = total + l_disp
             components['loss_dispersive'] = l_disp.detach()
 

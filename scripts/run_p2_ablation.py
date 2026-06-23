@@ -59,7 +59,10 @@ CELLS = {
 def build_cmd(python, cell, seed, args):
     """Build the train_flow_v5 command for one (cell, seed). Returns (tag, cmd)."""
     lam, freeze = CELLS[cell]
-    tag = f"p2_{cell}_s{seed}"
+    prefix = 'p2f' if args.faithful else 'p2'
+    tag = f"{prefix}_{cell}_s{seed}"
+    if args.faithful and lam > 0.0:
+        lam = 0.5  # faithful Dispersive weight per [13]/[14] (vs legacy 0.05)
     cmd = [python, '-m', 'scripts.train_flow_v5',
            '--config', args.config,
            '--recovery-h5', args.recovery_h5,
@@ -68,6 +71,8 @@ def build_cmd(python, cell, seed, args):
            '--lambda-disp', str(lam),
            '--seed', str(seed),
            '--tag', tag]
+    if args.faithful:
+        cmd += ['--dispersive-target', 'flow_mid', '--dispersive-tau', '0.5']
     if args.h4_ckpt:
         cmd += ['--transfer-from-h4', args.h4_ckpt]
     if freeze:
@@ -108,6 +113,12 @@ def main():
     parser.add_argument('--recovery-episodes', type=int, default=500)
     parser.add_argument('--hover-episodes', type=int, default=500)
     parser.add_argument('--quick', action='store_true', help='5-epoch smoke test per cell')
+    parser.add_argument('--faithful', action='store_true',
+                        help='Faithful Dispersive re-run: ON cells use lambda=0.5 and InfoNCE-L2 '
+                             'on the flow_net mid-block (--dispersive-target flow_mid). Tags are '
+                             'prefixed p2f_ and a separate manifest is used so legacy P2 runs are '
+                             'untouched. NOTE: under this placement flow_net is always trainable, '
+                             'so D1E0 != D0E0 (the legacy byte-identical no-op no longer holds).')
     parser.add_argument('--skip-done', action='store_true', default=True,
                         help='Skip a (cell,seed) whose best_model.pt already exists')
     parser.add_argument('--no-skip-done', dest='skip_done', action='store_false')
@@ -115,6 +126,10 @@ def main():
     parser.add_argument('--python', default=sys.executable, help='Interpreter for subprocesses')
     parser.add_argument('--manifest', default='evaluation_results/p2_ablation_manifest.json')
     args = parser.parse_args()
+
+    # Faithful re-run writes a separate manifest so the legacy P2 artifact is preserved.
+    if args.faithful and args.manifest == 'evaluation_results/p2_ablation_manifest.json':
+        args.manifest = 'evaluation_results/p2f_ablation_manifest.json'
 
     with open(os.path.join(ROOT, args.config), 'r', encoding='utf-8') as f:
         save_path = yaml.safe_load(f)['logging']['save_path']

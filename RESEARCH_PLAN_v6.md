@@ -146,6 +146,12 @@ recovery, 80 epochs, lr 1e-4, batch 256, task-conditioned, `configs/flow_policy_
 > With `--freeze-vision` that gradient is zero, so **D1E0 must collapse onto D0E0**.
 > The 2×2 therefore isolates the *interaction*: Dispersive can only act through a
 > trainable encoder. The decisive comparison is **D1E1 vs D0E1**.
+>
+> **⚠️ This note applies to the LEGACY off-path `vis_pooled` placement only.** The
+> faithful re-run (§ Faithful re-run below) puts Dispersive on the `flow_net` mid-block,
+> which trains regardless of `--freeze-vision` — so under the faithful implementation
+> **D1E0 ≠ D0E0** (the no-op prediction is overturned). The decisive comparison
+> **D1E1 vs D0E1** is unchanged.
 
 ### Design rules
 - **≥3 seeds** per cell (`--seed 0,1,2`), report **mean ± std of Tier1% and survival**.
@@ -210,6 +216,36 @@ contention — see Known Failure Mode #7).
 
 **Verdict:** representation collapse (what Dispersive targets) is **not** the binding
 constraint for visual hover. The paper pivots to a *negative result + diagnosis*.
+
+### Faithful re-run ✓ DONE (2026-06-23, all 12 cells, frozen protocol, oracle 0.9668)
+`evaluation_results/p2f_ablation_leaderboard.json` · `docs/experiment_report_faithful_dispersive.md`
+
+The deep-science-writer smoke test found the legacy P2 Dispersive was **unfaithful on
+3 axes** (off-path `vis_pooled`, λ=0.05, hand-rolled log-distance) while paper §2 claims
+"exactly as specified"; a 2nd trap was the paper's Algorithm 1 dropping the official
+`/z.shape[1]` (`/d`) normalisation → τ=0.5 saturates to zero gradient (another silent
+no-op). The faithful re-run uses **InfoNCE-L2 on the `flow_net` mid-block, λ=0.5, τ=0.5,
+`/d`** (`--faithful`); `p2f_` tags + separate manifest leave legacy P2 untouched.
+
+| Cell | Tier1% (mean±std) | Survival | cond-IAE |
+|------|-------------------|----------|----------|
+| D0E0 (Disp✗ E2E✗ frozen) | 87.8 ± 3.1 | 66.1 ± 3.7 | 2.9 m |
+| D1E0 (Disp✓ E2E✗ frozen) | **74.4 ± 8.7** | 60.4 ± 1.6 | 2.8 m |
+| D0E1 (Disp✗ E2E✓) | 92.2 ± 3.1 | 65.0 ± 2.8 | 2.9 m |
+| D1E1 (Disp✓ E2E✓) | 90.0 ± 5.4 | 62.9 ± 2.4 | 2.9 m |
+
+1. **Negative result CONFIRMED & rebuttal-proofed.** D1E1 vs D0E1 = **−2.2pp Tier1
+   (pooled std 6.3pp), −2.1pp survival** → no gain even where Dispersive can act. Faithful
+   to the official recipe, so the "you used it wrong" rebuttal is closed.
+2. **C2 ("D1E0 ≡ D0E0 byte-identical no-op") OVERTURNED.** The faithful flow_mid placement
+   trains `flow_net` under `--freeze-vision`, so `p2f_D1E0_s* ≠ p2f_D0E0_s*` (MD5 differs
+   ×3 seeds). The frozen row is **not inert** — Dispersive-on-frozen is mildly *harmful*
+   (Tier1 87.8→74.4, variance 3.1→8.7pp): a richer result that replaces the MD5 no-op.
+   **Draft §5/§9 must be rewritten.**
+3. E2E remains the only (small) Tier1 mover; precision unmoved (cond-IAE ~2.8–2.9 m, ~13%
+   oracle). The Phase-3 binding-constraint conclusion (far-range recovery, not
+   representation collapse) is unchanged. Only after this does the paper return to
+   deep-science-writer for literature + writing.
 
 ---
 

@@ -7,6 +7,7 @@ is fine-tuned with D²PPO (Dispersive PPO) advantage-weighted RL to overcome cov
 
 **Core contribution (original thesis):** Dispersive Loss prevents feature collapse in high-speed visual drone control.
 **⚠️ Status (2026-06-18): this thesis FAILED its pre-registered test.** P2 2×2 ablation (Dispersive×E2E, 3 seeds, frozen protocol): Dispersive gives no survival/Tier1 gain above seed noise (D1E1 vs D0E1 +1.1pp, pooled std 4.2pp); with a frozen encoder it is a byte-identical no-op (D1E0 ≡ D0E0, MD5-identical ×3 seeds). Pivot to negative-result + diagnosis — see `RESEARCH_PLAN_v6.md`.
+**✅ Faithful re-run (2026-06-23): negative result CONFIRMED & rebuttal-proof.** Official-code-faithful Dispersive (InfoNCE-L2 on `flow_net` mid-block, λ=0.5, τ=0.5, `/d` normalisation) gives D1E1 vs D0E1 = **−2.2pp Tier1 (pooled 6.3pp), −2.1pp survival** → still no gain. C2 "byte-identical no-op" **OVERTURNED** (faithful flow_mid trains `flow_net` under frozen encoder → D1E0 ≠ D0E0, Dispersive-on-frozen mildly harmful). See `docs/experiment_report_faithful_dispersive.md`, `evaluation_results/p2f_ablation_leaderboard.json`.
 **Target venues:** CoRL 2025 / ICRA 2026 / RSS 2026
 
 ---

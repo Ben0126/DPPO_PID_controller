@@ -198,7 +198,7 @@ class ConditionalUnet1d(nn.Module):
         self.final_conv = nn.Conv1d(action_dim, action_dim, 1)
 
     def forward(self, noisy_action: torch.Tensor, timestep: torch.Tensor,
-                visual_features: torch.Tensor) -> torch.Tensor:
+                visual_features: torch.Tensor, return_mid: bool = False):
         """
         Predict noise from noisy action sequence.
 
@@ -206,9 +206,13 @@ class ConditionalUnet1d(nn.Module):
             noisy_action: (B, action_dim, T_pred) noisy action sequence
             timestep: (B,) diffusion timestep indices
             visual_features: (B, feature_dim) from VisionEncoder
+            return_mid: if True, also return the mid-block activation
+                (B, C_mid, T_mid) — the generative network's intermediate
+                representation, on which Dispersive Loss [13]/[14] is applied.
 
         Returns:
             predicted_noise: (B, action_dim, T_pred)
+            (and, if return_mid, the mid-block activation tensor)
         """
         # Build conditioning vector
         t_emb = self.time_mlp(timestep)  # (B, time_embed_dim)
@@ -225,6 +229,7 @@ class ConditionalUnet1d(nn.Module):
 
         # Mid
         h = self.mid_block(h, cond)
+        mid_feat = h  # (B, C_mid, T_mid) generative-net intermediate representation
 
         # Decoder (use skip connections)
         for i, (upsample, dec_block) in enumerate(zip(self.upsamples, self.decoder_blocks)):
@@ -241,4 +246,7 @@ class ConditionalUnet1d(nn.Module):
             h = dec_block(h, cond)
 
         # Final projection
-        return self.final_conv(h)
+        out = self.final_conv(h)
+        if return_mid:
+            return out, mid_feat
+        return out

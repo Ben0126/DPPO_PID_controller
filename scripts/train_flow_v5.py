@@ -408,6 +408,8 @@ def train(args):
                     return_components=True,
                     task_cond=task_cond,
                     lambda_dispersive=args.lambda_disp,
+                    dispersive_target=args.dispersive_target,
+                    dispersive_tau=args.dispersive_tau,
                 )
             scaler.scale(total_loss).backward()
             scaler.unscale_(optimizer)
@@ -451,6 +453,8 @@ def train(args):
                         return_components=True,
                         task_cond=task_cond,
                         lambda_dispersive=args.lambda_disp,
+                        dispersive_target=args.dispersive_target,
+                        dispersive_tau=args.dispersive_tau,
                     )
                 val_flow  += comp['flow_loss'].item()
                 val_state += comp['state_loss'].item()
@@ -516,8 +520,15 @@ if __name__ == '__main__':
     parser.add_argument('--cue-scale', type=float, default=3.0,
                         help='divide the metric cue by this so it is ~O(1)')
     parser.add_argument('--lambda-disp', type=float, default=0.05,
-                        help='Dispersive loss weight (default: 0.05; set 0.0 to disable '
-                             '— the Dispersive OFF arm of the P2 ablation)')
+                        help='Dispersive loss weight (legacy default 0.05; faithful re-run '
+                             'uses 0.5 per [13]/[14]; set 0.0 to disable — Dispersive OFF arm)')
+    parser.add_argument('--dispersive-target', choices=['vis_pooled', 'flow_mid'],
+                        default='vis_pooled',
+                        help="Where to apply dispersive loss. 'vis_pooled' = legacy off-path "
+                             "placement (pre-2026-06-22); 'flow_mid' = faithful to [13]/[14], "
+                             "InfoNCE-L2 on the flow_net mid-block intermediate representation.")
+    parser.add_argument('--dispersive-tau', type=float, default=0.5,
+                        help='InfoNCE temperature for the flow_mid faithful dispersive loss (default 0.5)')
     parser.add_argument('--seed', type=int, default=None,
                         help='Seed python/numpy/torch for reproducible P2 ablation runs')
     parser.add_argument('--tag', type=str, default=None,
