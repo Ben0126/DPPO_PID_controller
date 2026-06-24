@@ -340,12 +340,72 @@ def fig3_single_seed_swing():
     print(f'wrote {out}')
 
 
+def fig5_ablation_forest():
+    """2x2 ablation forest plot (faithful Dispersive, p2f): Tier-1 and survival per
+    cell with across-seed mean +/- std. The decisive D1E1-vs-D0E1 contrast falls
+    inside the pooled across-seed std -> Dispersive has no effect above seed noise."""
+    lb = load('p2f_ablation_leaderboard.json')['cell_agg']
+
+    # top-to-bottom: the decisive E2E pair first, then the frozen pair
+    rows = [('D1E1', 'D1E1  ON / E2E', True),
+            ('D0E1', 'D0E1  OFF / E2E', False),
+            ('D1E0', 'D1E0  ON / frozen', True),
+            ('D0E0', 'D0E0  OFF / frozen', False)]
+    y = np.arange(len(rows))[::-1]
+
+    def col(on):  return '#c0392b' if on else '#2c7fb8'
+    def mark(on): return 's' if on else 'o'
+
+    # pooled across-seed std for the decisive comparison (matches the paper's 6.3 pp)
+    pooled = 100 * float(np.sqrt(lb['D1E1']['tier1_std']**2 + lb['D0E1']['tier1_std']**2))
+
+    fig, (axT, axS) = plt.subplots(1, 2, figsize=(10.6, 4.0), sharey=True)
+
+    def panel(ax, mean_key, std_key, title, band_cell=None):
+        if band_cell is not None:
+            c = lb[band_cell]['tier1_mean'] * 100
+            ax.axvspan(c - pooled, c + pooled, color='#7f8c8d', alpha=0.14, zorder=1,
+                       label=f'D0E1 ± pooled std ({pooled:.1f} pp)')
+        for yi, (cell, _lab, on) in zip(y, rows):
+            m = lb[cell][mean_key] * 100
+            s = lb[cell][std_key] * 100
+            ax.errorbar(m, yi, xerr=s, fmt=mark(on), ms=10, color=col(on),
+                        capsize=5, lw=2, mec='k', mew=0.6, zorder=3)
+            ax.annotate(f'{m:.1f}±{s:.1f}', (m, yi), textcoords='offset points',
+                        xytext=(0, 11), ha='center', fontsize=8.6, color=col(on))
+        ax.set_yticks(y); ax.set_yticklabels([r[1] for r in rows], fontsize=9)
+        ax.set_ylim(-0.6, len(rows) - 0.4)
+        ax.set_xlabel(title)
+        ax.grid(axis='x', ls=':', alpha=0.5)
+
+    panel(axT, 'tier1_mean', 'tier1_std', 'Tier-1 pass-rate (%)', band_cell='D0E1')
+    panel(axS, 'survival_mean', 'survival_std', 'Survival (%)')
+
+    # annotate the decisive null on the Tier-1 panel
+    d = (lb['D1E1']['tier1_mean'] - lb['D0E1']['tier1_mean']) * 100
+    axT.annotate(f'D1E1 − D0E1 = {d:+.1f} pp\n(∈ noise)', xy=(lb['D1E1']['tier1_mean']*100, y[0]),
+                 xytext=(58, 3.0), fontsize=8.8, color='#7f0000', ha='center',
+                 arrowprops=dict(arrowstyle='->', color='#7f0000', lw=1.1),
+                 bbox=dict(facecolor='white', edgecolor='#7f0000', alpha=0.85, pad=1.5))
+    axT.legend(loc='lower right', fontsize=8.0, framealpha=0.9)
+    for ax in (axT, axS):
+        ax.set_xlim(40, 100)
+
+    fig.suptitle('Faithful Dispersive × E2E (2×2, 3 seeds): no Dispersive effect above seed noise',
+                 fontsize=11.5, y=1.02)
+    fig.tight_layout()
+    out = os.path.join(FIGDIR, 'ablation_forest.png')
+    fig.savefig(out, dpi=200, bbox_inches='tight'); plt.close(fig)
+    print(f'wrote {out}')
+
+
 def main():
     os.makedirs(FIGDIR, exist_ok=True)
     fig1_rank_survival()
     fig2_crosshair_saturation()
     fig3_single_seed_swing()
     fig4_sensing_ablation()
+    fig5_ablation_forest()
     print(f'\nFigures in {FIGDIR}')
 
 

@@ -19,25 +19,25 @@ high-frequency visual control. We pre-registered and tested this hypothesis on a
 vision-based quadrotor hover task (monocular 64×64 FPV + IMU, flow-matching policy,
 50 Hz closed loop). Under a **frozen evaluation protocol** (paired initial conditions,
 conditional-on-survival precision, bootstrap CIs, across-seed mean ± std, a *measured*
-state-based oracle), a **2×2 ablation** (Dispersive × end-to-end encoder, three seeds per
-cell) — run with an **official-code-faithful** Dispersive Loss (InfoNCE-L2 on the
-generative `flow_net` mid-block, λ=0.5, τ=0.5, including the `/d` per-dimension
-normalisation) — finds **no survival or task-precision gain above seed noise** (−2.2 pp
-Tier-1 within a 6.3 pp pooled std; survival −2.1 pp). Because the implementation follows
-the released code exactly — placement, weight, and per-dimension normalisation — the null
-cannot be attributed to a fidelity error. The frozen-encoder condition is an informative
-control rather than a no-op: under the faithful mid-block placement the term trains the
-generative network **even with a frozen encoder**, where it **destabilises** control
-(mean Tier-1 87.8→74.4, variance up) rather than leaving it inert.
+state-based oracle), a
+**2×2 ablation** (Dispersive × end-to-end encoder, three seeds per cell), run with an
+**official-code-faithful** Dispersive Loss (InfoNCE-L2 on the generative `flow_net`
+mid-block, λ=0.5, τ=0.5, including the `/d` per-dimension normalisation), finds that
+**Dispersive Loss yields no survival or task-precision gain above seed noise** (−2.2 pp
+Tier-1 within a 6.3 pp pooled std; survival −2.1 pp). This faithful re-run closes the
+"you used it wrong" rebuttal; it also **overturns** our earlier byte-identical-no-op
+control: with the faithful mid-block placement the term trains the generative network
+**even under a frozen encoder**, where it is mildly *harmful* (Tier-1 87.8→74.4) rather
+than inert.
 Reaching even this null verdict required a protocol hardened against **single-seed
 noise**: our own from-pixels PPO baseline swings between a 0 % and 47 % Tier-1 pass-rate
 on the training seed alone, so we report every retrained model as an **across-seed
 mean ± std** rather than a single leaderboard row.
-We then diagnose *why*: (i) Dispersive does not cure collapse — at **both** the faithful
-`flow_net` mid-block and an off-path placement (§6.1) it **games its own objective**,
-inflating feature norm (~9× and ~287× respectively) while the intrinsic rank gets *worse*,
-so closed-loop survival is **decoupled** from that geometry (a large rank swing leaves
-survival flat); (ii) the only real survival mover is a
+We then diagnose *why*: (i) at an off-path placement (a mechanistic probe; §6.1)
+Dispersive does not cure collapse — it **games its own
+objective**, inflating feature norm ~287× while the intrinsic rank gets *worse*
+(effective rank 9→2), and closed-loop survival is **decoupled** from that rank (a 15×
+rank swing leaves survival flat); (ii) the only real survival mover is a
 transfer/conditioning/recovery **recipe**, not Dispersive; (iii) precision is gated
 neither by representation nor by sensing. Although the 64×64 FPV cannot encode metric
 range beyond ~2 m, a renderer gate shows that loss is a fixable target artifact (a
@@ -76,9 +76,9 @@ three contributions:
    conditional-on-survival precision, bootstrap CIs, across-seed mean ± std, and a
    *measured* rather than assumed oracle).
 2. **A pre-registered 2×2 falsification** (three seeds per cell) of the Dispersive-Loss
-   hypothesis, hardened with an **official-code-faithful** implementation (InfoNCE-L2
-   on the `flow_net` mid-block, λ=0.5, `/d`), so the null result controls for
-   implementation fidelity, plus a frozen-encoder control.
+   hypothesis, hardened with an **official-code-faithful** re-implementation (InfoNCE-L2
+   on the `flow_net` mid-block, λ=0.5, `/d`) so the null result is immune to a
+   method-fidelity rebuttal, plus a frozen-encoder control.
 3. **A mechanistic diagnosis** separating the three candidate bottlenecks
    (representation, data coverage, sensing) and localising the real one — including a
    positive-control *intervention* that hands the policy the oracle sensing signal and
@@ -86,9 +86,10 @@ three contributions:
    incompetence as the binding constraint.
 
 This is a negative result, but a constructive one: it redirects effort from
-representation regularisation to the observation model. Because the regulariser is
-implemented exactly as released — placement, weight, and per-dimension normalisation
-(§3) — the null result cannot be attributed to an implementation error.
+representation regularisation to the observation model. Where an earlier version of this
+study used a non-faithful Dispersive variant, we re-ran the core ablation with the
+official recipe (§5); the verdict is unchanged, so the result does not hinge on an
+implementation detail.
 
 ---
 
@@ -199,9 +200,9 @@ discriminability — telling two near-identical grasp scenes apart — spreading
 features can help [14]. Where the bottleneck is behavioural coverage — recovering from a
 one-to-three-metre offset before crashing — feature dispersion addresses the wrong axis,
 echoing Schneider et al.'s [27] finding that representation quality is not the constraint
-governing out-of-distribution behaviour. Our contribution is a faithful, pre-registered,
-multi-seed demonstration of where a popular regularizer stops working on this task, and a
-diagnosis of why.
+governing out-of-distribution behaviour. Our contribution is a faithful, adequately
+powered demonstration of where a popular regularizer stops working, and a diagnosis of
+why.
 
 ---
 
@@ -230,19 +231,16 @@ intermediate block — here the `flow_net` mid-block (`return_mid=True`),
 visual encoder is trainable** — the property that makes the frozen-encoder control in §5
 informative.
 
-**Fidelity of the implementation, and an off-path variant studied in §6.1.** Two
-configuration choices determine whether the term is active at all, and we fix both to the
-released values. *Placement, weight, and form:* the term must sit on a generative-network
-intermediate block (here the `flow_net` mid-features) at λ=0.5 in the InfoNCE-L2 form. A
-hand-rolled log-distance variant `−mean_{i≠j} log(‖x_i − x_j‖ + ε)` at λ=0.05 applied to
-`vis_pooled` — a feature that feeds **only** the auxiliary state head, not the action path
-(which conditions on `attended` and `imu_feat`) — departs from the released recipe on all
-three axes. *Normalisation:* the published Algorithm 1 omits the per-dimension `/d` divisor
-present in the released code; without it the loss saturates to zero gradient at τ=0.5, so
-this divisor is required for the term to carry gradient at all. The headline ablation (§5)
-uses the released configuration on both axes. Separately, §6.1 studies the off-path
-`vis_pooled` placement as a mechanistic probe, where its off-path position exposes how a
-scale-sensitive dispersion term can game its objective.
+**A note on fidelity (and an off-path control used in §6.1).** An earlier version of this
+study applied a hand-rolled dispersive variant
+`L_disp = −mean_{i≠j} log(‖x_i − x_j‖ + ε)` with λ=0.05 to `vis_pooled` — a feature that
+feeds **only** the auxiliary state head, not the action path (which conditions on
+`attended` and `imu_feat`). That variant was unfaithful on three axes (placement, weight,
+functional form), and a second trap — dropping the official `/d` normalization, as the
+published Algorithm 1 does — saturates the loss to zero gradient at τ=0.5. We correct both
+for the headline result (§5). We *retain* the off-path `vis_pooled` variant only as a
+mechanistic probe in §6.1, where its very off-path-ness exposes how a scale-sensitive
+dispersion term games its objective.
 
 **Oracle.** A state-based PPO controller reading the privileged 15-D state is the
 performance upper bound.
@@ -343,7 +341,7 @@ mean ± std (`scripts/make_paper_figures.py`,
 
 ---
 
-## 5. The Core Ablation: Dispersive × E2E (2×2, 3 seeds)
+## 5. The Core Ablation: Dispersive × E2E (2×2, 3 seeds, faithful re-run)
 
 We vary two factors, holding everything else fixed (H4-transfer init, 500 hover + 500
 recovery demos, 80 epochs, lr 1e-4, batch 256, task-conditioned):
@@ -352,17 +350,19 @@ recovery demos, 80 epochs, lr 1e-4, batch 256, task-conditioned):
   (OFF), on the `flow_net` mid-block.
 - **E2E**: vision encoder trainable (ON) vs frozen at the transferred init (OFF).
 
-**Design and power.** With three seeds per cell and a pooled across-seed Tier-1 std of
-~6.3 pp, this design is powered to detect only large effects (≳6 pp Tier-1); a smaller
-true effect of Dispersive cannot be excluded. We therefore report a null in the sense of
-*no effect above seed noise*, not a proof of exact zero, and judge support by whether
-D1E1 exceeds D0E1 by more than the pooled std.
+**Method fidelity (why this is a re-run).** An earlier pass used an unfaithful dispersive
+variant (off-path `vis_pooled`, λ=0.05, hand-rolled log-distance), and a printed
+Algorithm 1 that drops the official `/d` normalization would saturate even a
+correctly-placed term to zero gradient at τ=0.5 (§3). A negative-result paper resting on
+"the faithfully-implemented method fails" cannot use such a variant, so we re-ran the full
+2×2 with the official recipe (the P2f sweep, `run_p2_ablation.py --faithful`); the verdict
+below is the faithful one.
 
-**What the frozen-encoder cell tests.** Because the term lands on `flow_net`
+**What the frozen-encoder cell now tests.** Because the faithful term lands on `flow_net`
 mid-features, it trains the generative network *even with a frozen encoder*. The
-frozen-encoder cell (E0) is therefore not a trivial no-op: it isolates
+frozen-encoder cell (E0) is therefore no longer a trivial no-op control; it isolates
 Dispersive's effect with the *encoder* held fixed but the *flow network* still adapting.
-The decisive hypothesis test is **D1E1 vs D0E1** (Dispersive ON vs OFF, both E2E).
+The decisive hypothesis test remains **D1E1 vs D0E1** (Dispersive ON vs OFF, both E2E).
 
 **Table 2 — 2×2 ablation, faithful Dispersive** (`evaluate_p2_ablation.py`, 3 seeds,
 frozen protocol; `evaluation_results/p2f_ablation_leaderboard.json`).
@@ -370,32 +370,23 @@ frozen protocol; `evaluation_results/p2f_ablation_leaderboard.json`).
 | Cell | Disp / E2E | Tier-1 (mean±std) | Survival (mean±std) | cond-IAE | %Oracle |
 |------|-----------|------------------:|--------------------:|---------:|--------:|
 | D0E0 | OFF / frozen | 87.8 ± 3.1 | 66.1 ± 3.7 | 2.93 m | 13.4 % |
-| D1E0 | ON / frozen  | **74.4 ± 8.7** | **60.4 ± 1.6** | 2.81 m | 12.9 % |
+| D1E0 | ON / frozen  | **74.4 ± 8.7** | **60.4 ± 1.6** | 2.7–3.0 m | 12.9 % |
 | D0E1 | OFF / E2E    | 92.2 ± 3.1 | 65.0 ± 2.8 | 2.91 m | 12.4 % |
-| D1E1 | ON / E2E     | 90.0 ± 5.4 | 62.9 ± 2.4 | 2.89 m | 12.2 % |
-
-![Figure 5](figures/ablation_forest.png)
-
-**Figure 5.** The 2×2 ablation as a forest plot (faithful Dispersive, 3 seeds, mean ±
-across-seed std). *Left:* Tier-1; the grey band is D0E1 ± the pooled across-seed std
-(6.3 pp). The decisive D1E1 (ON/E2E) sits inside it — **no Dispersive effect above seed
-noise** (−2.2 pp). The one cell that moves is D1E0 (ON/frozen, 74.4 ± 8.7), where
-Dispersive-on-frozen lowers the mean and inflates the variance. *Right:* survival is flat
-across all four cells. (`scripts/make_paper_figures.py` →
-`evaluation_results/p2f_ablation_leaderboard.json`.)
+| D1E1 | ON / E2E     | 90.0 ± 5.4 | 62.9 ± 2.4 | 2.81 m | 12.2 % |
 
 **Findings.**
-- **Dispersive is not supported (Figure 5).** D1E1 vs D0E1: Tier-1 **−2.2 pp inside the
-  6.3 pp pooled across-seed std**; survival −2.1 pp; conditional precision unchanged
-  (2.89 vs 2.91 m). The decision rule (supported iff D1E1 beats D0E1 by more than the
-  pooled std) returns **NOT supported**. The conclusion holds under the off-path,
-  low-weight variant of §6.1 as well (+1.1 pp), so it does not hinge on placement or weight.
-- **The frozen-encoder condition is an informative control, not a no-op.** Under the
-  faithful mid-block placement the encoder-frozen runs *do* train `flow_net`, so the
-  checkpoints differ (`p2f_D1E0_s* ≠ p2f_D0E0_s*`, MD5 distinct across all three seeds).
-  The frozen row is not inert: Dispersive-on-frozen **destabilises** control (mean
-  Tier-1 87.8→74.4, variance 3.1→8.7 pp) — with no trainable encoder to co-adapt, repelling
-  the mid-features pushes the mean down and the variance up rather than helping.
+- **Dispersive is not supported.** D1E1 vs D0E1: Tier-1 **−2.2 pp inside the 6.3 pp
+  pooled across-seed std**; survival −2.1 pp; conditional precision unchanged
+  (2.81 vs 2.91 m). The decision rule (supported iff D1E1 beats D0E1 by more than the
+  pooled std) returns **NOT supported** — the same verdict as the earlier unfaithful pass
+  (+1.1 pp), now under the official recipe.
+- **The "byte-identical no-op" control is overturned.** Under the faithful mid-block
+  placement the encoder-frozen runs *do* train `flow_net`, so the checkpoints differ
+  (`p2f_D1E0_s* ≠ p2f_D0E0_s*`, MD5 distinct across all three seeds). The frozen row is
+  not inert: Dispersive-on-frozen is mildly **harmful** (Tier-1 87.8→74.4, std 3.1→8.7) —
+  with no trainable encoder to co-adapt, repelling the mid-features destabilises control.
+  This richer result replaces the earlier claim that, with a frozen encoder, "Dispersive
+  ON" is bit-for-bit "Dispersive OFF".
 - **E2E is the only (small) Tier-1 mover** (D0E0→D0E1, +4.4 pp), and even it neither
   extends survival nor improves precision (§6.2).
 
@@ -415,14 +406,16 @@ lack (§6.3).
 
 ### 6.1 Representation: Dispersive games its objective; survival ⟂ rank
 
-*Placement note.* We measure feature geometry at **both** placements. We start with the
-off-path `vis_pooled` placement (Table 3; legacy P2 checkpoints): because `vis_pooled`
-feeds only the auxiliary state head, it cleanly isolates how a scale-sensitive dispersion
-term games its objective off the action path. We then confirm the same pathology at the
-faithful `flow_net` mid-block, where the official term actually acts (Table 4; the p2f
-checkpoints of §5). One placement-dependent detail: off-path, a frozen encoder zeroes the
-gradient (so D1E0 ≡ D0E0, the legacy no-op); at the faithful placement the term trains
-`flow_net` even when frozen (§5), so D1E0 ≠ D0E0.
+*Placement note.* §5's falsification uses the faithful `flow_net` mid-block placement.
+This mechanistic probe instead measures the legacy **off-path `vis_pooled`** placement
+(λ=0.05), retained deliberately: because `vis_pooled` feeds only the auxiliary state head,
+it exposes an independent pathology — how a scale-sensitive dispersion term games its
+objective when it sits off the action path. The two placements together make the stronger
+point: the faithful on-path term yields no gain (§5), and the off-path term games its
+objective while survival stays decoupled from its representation geometry (below). Cells
+below are the **legacy P2 checkpoints**; at this off-path placement a frozen encoder
+genuinely zeroes the gradient, so here D1E0 ≡ D0E0 (this is the legacy no-op, not the
+faithful frozen cell of §5).
 
 We push a fixed 4000-image hover+recovery batch through each checkpoint's encoder and
 measure the geometry of `vis_pooled` (D=256). (`measure_feature_collapse.py`, legacy P2
@@ -450,11 +443,10 @@ projection, leaving the action-relevant spatial pathway comparatively untouched.
 
 **The decisive plot is rank vs survival (Figure 1).** Effective rank swings **15×**
 (30→9→2) while closed-loop survival stays flat (66.1→65.0→65.0 %, within ~3 pp std).
-**Survival is decoupled from `vis_pooled` rank.** Within this off-path probe, neither
-preventing collapse (D0E0 rank 30) nor worsening it (D1E1 rank 2) moves the closed-loop
-outcome. Together with the faithful on-path null (§5), this is the paper's strongest
-evidence that, *for this task*, representation collapse is not the binding constraint. The
-same pathology and decoupling hold at the faithful placement (Table 4, below).
+**Survival is decoupled from `vis_pooled` rank.** Representation collapse — neither preventing it
+(D0E0 rank 30) nor worsening it (D1E1 rank 2) — moves the closed-loop outcome. This is
+the strongest statement of the result: representation collapse is *not* the binding
+constraint.
 
 ![Figure 1](figures/rank_survival_decoupling.png)
 
@@ -462,35 +454,6 @@ same pathology and decoupling hold at the faithful placement (Table 4, below).
 2×2 cells (30.3 frozen → 9.0 E2E → 2.0 E2E+Dispersive), while closed-loop survival and
 Tier-1 pass-rate (lines, right axis; error bars = across-seed std) stay flat. Survival
 is decoupled from the representation geometry Dispersive targets.
-
-**The same pathology holds at the faithful placement (Table 4).** The off-path probe
-above cannot say whether the faithful `flow_net` mid-features — where the official term
-actually acts — behave the same way. Measuring them directly (same fixed 4000-sample
-batch, now of (image, IMU, action, timestep `t`) so the mid-features are well defined;
-`measure_feature_collapse_flowmid.py`) returns the same verdict, more sharply. Dispersive
-ON drives the InfoNCE-L2 objective to its subset floor (`log(1/2048) = −7.62`, identical
-across all three seeds) — it fully *wins* its objective — but does so purely by inflating
-the mid-feature norm ~9× (9.4→84) while the effective rank **collapses** (221→36 with a
-trainable encoder, 249→37 frozen; dims-for-99 %-variance 683→177). Exactly as off-path,
-the term games a scale-sensitive objective by norm growth and *worsens* intrinsic rank.
-Two further points: (i) naive E2E barely dents the mid-feature rank (D0E0→D0E1,
-249→221) — unlike `vis_pooled` (30→9), the action-path mid-features do not strongly
-collapse on their own, so there is little for Dispersive to "fix"; (ii) the
-frozen-Dispersive cell (D1E0) shows the *same* norm blow-up and rank collapse as D1E1,
-a plausible mechanism for its closed-loop destabilisation (§5) — repelling the velocity
-field's own mid-features inflates them ~9× with no encoder free to compensate. Across all
-four cells the mid-feature rank swings ~7× (249→36) while survival stays within ~3 pp
-(§5): the rank-vs-survival decoupling holds at the faithful placement too.
-
-**Table 4 — faithful `flow_net` mid-block geometry** (D=1024, mean±std over 3 seeds;
-`measure_feature_collapse_flowmid.py` → `evaluation_results/p2f_feature_collapse_flowmid.json`).
-
-| Cell | eff_rank | dims for 99% var | feat_norm | disp_infonce | mean cos |
-|------|---------:|-----------------:|----------:|-------------:|---------:|
-| D0E0 (OFF / frozen) | 248.8 ± 9.0 | 722 | 9.35 | −0.283 | 0.174 |
-| D1E0 (ON / frozen)  | 36.7 ± 0.5 | 189 | 83.8 | **−7.624** | 0.058 |
-| D0E1 (OFF / E2E)    | 221.4 ± 16.2 | 683 | 9.49 | −0.293 | 0.163 |
-| D1E1 (ON / E2E)     | **35.9 ± 0.6** | 177 | **84.8** | **−7.624** | 0.056 |
 
 ### 6.2 The only survival mover is the recipe, not Dispersive (or E2E)
 
@@ -501,16 +464,16 @@ Decomposing the gain over the prior frontier as controlled steps
 |------|---------:|-----------:|---------:|
 | prior frontier Joint_E2E_v5 → **recipe** (frozen cell D0E0) | **+7.8 pp** | **+3.9 pp** | 2.93 m |
 | + E2E (D0E0 → D0E1) | +4.4 pp | −1.1 pp | 2.91 m |
-| + Dispersive, faithful (D0E1 → D1E1) | −2.2 pp (∈ noise) | −2.1 pp | 2.89 m |
+| + Dispersive, faithful (D0E1 → D1E1) | −2.2 pp (∈ noise) | −2.1 pp | 2.81 m |
 
-(The D0E0/D0E1 cells are Dispersive-OFF, so the +Dispersive step is the only one that
-depends on the regulariser: under the official configuration it is −2.2 pp, and under the
-off-path low-weight variant of §6.1 it is +1.1 pp — both inside the across-seed std.)
+(The D0E0/D0E1 cells are Dispersive-OFF and so are identical between the legacy and
+faithful runs; only the +Dispersive step is re-measured under the faithful recipe — it
+moves from the legacy +1.1 pp to −2.2 pp, both inside the across-seed std.)
 
 The dominant lift is the **recipe** (H4-transfer init + task-conditioning + recovery
 mix), and it holds with a **frozen** encoder — so it is not from E2E. E2E adds a small
 Tier-1-only bump that neither extends survival nor improves precision. Dispersive adds
-nothing (slightly negative under the official configuration, ∈ noise). **Mover ranking:
+nothing (slightly negative under the faithful recipe, ∈ noise). **Mover ranking:
 recipe ≫ E2E ≫ Dispersive ≈ 0.**
 
 ### 6.3 Precision is coverage/teacher-competence-limited, not sensing-limited
@@ -544,8 +507,8 @@ observation-only checks bear on it:
    only normalised direction (range-invariant).
 
 The policy's 2.83 m steady drift sits exactly where the observation carries **no
-recoverable metric range** (Figure 2). One might conclude that precision is
-*information-gated by the observation model*. That inference does not follow: a
+recoverable metric range** (Figure 2). It is tempting to stop here and call precision
+*information-gated by the observation model* — the conclusion of an earlier draft. But a
 measurement that the FPV does not encode range does not establish that the missing range
 is the *binding* cause of imprecision. We test that implication directly with a renderer
 gate and a positive-control intervention, and **both refute it**.
@@ -619,7 +582,7 @@ trivially satisfied by norm inflation, *worsening* intrinsic rank; one should re
 the feature the policy actually conditions on, and use a scale-invariant criterion. The
 faithful on-path placement (§5) closes that obvious escape — there is no auxiliary-only
 projection to inflate — yet it still does not help (no gain when the encoder is trainable;
-mildly destabilising when frozen), so neither placement rescues closed-loop control.
+mildly harmful when frozen), so neither placement rescues closed-loop control.
 (c) The rank-vs-survival decoupling argues that "prevent representation collapse" is not
 automatically the right lever for closed-loop control — the binding constraint must be
 located empirically.
@@ -659,14 +622,10 @@ all predicted not to move the ~2.8 m floor.
   off-path `vis_pooled` placement mechanistically (§6.1). We did not exhaustively sweep λ,
   τ, or every candidate intermediate block, or alternative dispersion criteria — though
   §6.1–§6.2 explain mechanistically why those are unlikely to rescue it here.
-- **Statistical power.** Three seeds per cell with a pooled across-seed Tier-1 std of
-  ~6.3 pp powers this design to detect only large effects (≳6 pp Tier-1). The result is a
-  null *in the sense of no effect above seed noise*; a smaller true effect of Dispersive —
-  and the directional, high-variance frozen-encoder degradation — cannot be sharply
-  resolved at this seed count.
 - T_obs = 2 frames could in principle yield range via motion parallax; we argue (and the
   flat empirical precision across all configs supports) that the 28 ms baseline and slow
   drift make this far weaker than the static size channel.
+- Three seeds per cell; effects are reported relative to the pooled across-seed std.
 
 ---
 
@@ -677,10 +636,10 @@ measured oracle and an **official-code-faithful** Dispersive implementation (Inf
 the `flow_net` mid-block, λ=0.5, `/d`), **Dispersive Loss does not improve survival or
 precision** above seed noise (−2.2 pp Tier-1, ∈ noise). Even with a frozen encoder — where
 the faithful term still trains the generative network — it does not help and is mildly
-destabilising, so the frozen-encoder condition is an informative control rather than a
-no-op. At **both** the faithful and an off-path placement the mechanism does not even cure
-the collapse it targets — it games its scale-sensitive objective and worsens intrinsic
-rank — and closed-loop survival is decoupled from that representation geometry entirely. The real levers are elsewhere: a transfer/conditioning/recovery
+harmful, overturning the byte-identical-no-op control of an earlier, unfaithful pass. At an
+off-path placement the mechanism does not even cure the collapse it targets — it games its
+scale-sensitive objective and worsens intrinsic rank — and closed-loop survival is
+decoupled from that representation geometry entirely. The real levers are elsewhere: a transfer/conditioning/recovery
 recipe accounts for the survival gains, and **task precision is capped by the teacher's
 incompetence in the operating regime**, not by sensing: a positive-control intervention
 that hands the policy the oracle metric position error barely moves precision (~36× the
@@ -700,8 +659,7 @@ result and its diagnosis are reproducible.
 | §4 P1 baselines (BC-vision-only, PPO-from-pixels), 3 seeds | `scripts/train_bc_vision_only.py`, `scripts/train_ppo_from_pixels.py` (+ `models/ppo_pixel.py`, `configs/ppo_from_pixels.yaml`), `scripts/evaluate_baselines_frozen.py`; seed driver `scripts/run_baseline_seeds_1_2.sh` | seed 0: `evaluation_results/baselines_frozen_leaderboard.json`, `…_ppopx.json`; seeds 1–2: `…_{bc,ppopx}_s{1,2}.json`; aggregate (mean±std): `…_baselines_frozen_seeds_aggregate.json` |
 | §5 faithful 2×2 (P2f, headline) | `scripts/run_p2_ablation.py --faithful`, `scripts/evaluate_p2_ablation.py` | `evaluation_results/p2f_ablation_{manifest,leaderboard}.json` — `docs/experiment_report_faithful_dispersive.md` |
 | legacy 2×2 ablation (off-path, §6.1 probe) | `scripts/run_p2_ablation.py`, `scripts/evaluate_p2_ablation.py` | `evaluation_results/p2_ablation_{manifest,leaderboard}.json` |
-| §6.1 feature geometry — off-path `vis_pooled` (Table 3) | `scripts/measure_feature_collapse.py` | `evaluation_results/p2_feature_collapse.json` — `docs/experiment_report_feature_collapse.md` |
-| §6.1 feature geometry — faithful `flow_net` mid-block (Table 4) | `scripts/measure_feature_collapse_flowmid.py` | `evaluation_results/p2f_feature_collapse_flowmid.json` |
+| §6.1 feature geometry (legacy off-path) | `scripts/measure_feature_collapse.py` | `evaluation_results/p2_feature_collapse.json` — `docs/experiment_report_feature_collapse.md` |
 | §6.2 survival movers | — | `docs/experiment_report_survival_movers.md` |
 | §6.3 coverage probe | `scripts/measure_ood_coverage.py` | `evaluation_results/p3b_ood_coverage.json` — `docs/experiment_report_ood_coverage.md` |
 | §6.3 image-distance info | `scripts/measure_image_distance_info.py` | `evaluation_results/p3b_image_distance_info{,_nodr}.json` — `docs/experiment_report_image_distance_info.md` |
