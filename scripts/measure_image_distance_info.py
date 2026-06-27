@@ -109,11 +109,19 @@ def main():
     ap.add_argument('--n-samples', type=int, default=300)
     ap.add_argument('--quadrotor-config', default='configs/quadrotor_v4.yaml')
     ap.add_argument('--no-dr', action='store_true', help='disable domain randomisation (clean signal)')
+    ap.add_argument('--target-render', choices=['crosshair', 'perspective'],
+                    default='crosshair',
+                    help='FPV target marker style (crosshair=production saturating; '
+                         'perspective=non-saturating AA disk)')
+    ap.add_argument('--physical-size', type=float, default=0.5,
+                    help='world half-size (m) of the perspective target')
     ap.add_argument('--out', default='evaluation_results/p3b_image_distance_info.json')
     args = ap.parse_args()
 
     base_env = QuadrotorEnvV4(config_path=os.path.join(ROOT, args.quadrotor_config))
-    visual_env = QuadrotorVisualEnv(base_env, image_size=64, dr_enabled=not args.no_dr)
+    visual_env = QuadrotorVisualEnv(base_env, image_size=64, dr_enabled=not args.no_dr,
+                                    target_render=args.target_render,
+                                    physical_size=args.physical_size)
 
     rng = np.random.default_rng(12345)
     per_dist_imgs = {}
@@ -153,6 +161,8 @@ def main():
 
     out = {
         'dr_enabled': not args.no_dr,
+        'target_render': args.target_render,
+        'physical_size_m': args.physical_size,
         'n_samples': args.n_samples,
         'distances': ds,
         'crosshair_size_by_distance': size_table,

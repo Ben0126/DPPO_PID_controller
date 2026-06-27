@@ -66,39 +66,9 @@ def ridge_r2(X, y, alpha=1.0, seed=0):
     return 1.0 - ss_res / ss_tot
 
 
-class PerspectiveTargetVisualEnv(QuadrotorVisualEnv):
-    """FPV renderer whose target marker is a non-saturating, perspective,
-    anti-aliased disk: apparent radius (px) = (W * focal) * S / dist, i.e. it grows
-    as 1/dist with no floor/cap and with sub-pixel (AA) gradation, so finer
-    resolution yields finer distance resolvability. Everything else (sky, ground,
-    horizon, DR jitter, per-frame noise) is identical to the production env."""
-
-    def __init__(self, *args, physical_size: float = 0.5, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.physical_size = physical_size  # world half-size of the target (m)
-
-    def _draw_target(self, image, px, py, target_dist, W, H):
-        focal = self._dr_focal_scale                       # per-episode DR focal
-        # perspective projection of a fixed-world-size target; matches the px/py
-        # angular scale used in _render_fpv (W * focal). DR size jitter kept,
-        # scaled to resolution so the relative perturbation matches production.
-        radius = (W * focal) * self.physical_size / (target_dist + 0.1)
-        radius += self._dr_crosshair_d * (W / 64.0)
-        radius = float(np.clip(radius, 0.5, 0.45 * W))
-
-        r_ceil = int(np.ceil(radius)) + 1
-        y0, y1 = max(0, py - r_ceil), min(H, py + r_ceil + 1)
-        x0, x1 = max(0, px - r_ceil), min(W, px + r_ceil + 1)
-        if y1 <= y0 or x1 <= x0:
-            return
-        ys = np.arange(y0, y1)[:, None]
-        xs = np.arange(x0, x1)[None, :]
-        dist_c = np.sqrt((ys - py) ** 2 + (xs - px) ** 2)
-        # anti-aliased coverage: 1 inside, linear 1->0 over the outer 1 px ring
-        cov = np.clip(radius + 0.5 - dist_c, 0.0, 1.0)[..., None]   # (h,w,1)
-        patch = image[y0:y1, x0:x1].astype(np.float32)
-        color = np.array([255.0, 50.0, 50.0])
-        image[y0:y1, x0:x1] = np.clip(patch * (1 - cov) + color * cov, 0, 255).astype(np.uint8)
+# NOTE: the perspective AA-disk target now lives in the production env
+# (QuadrotorVisualEnv(target_render="perspective"), the _draw_target_perspective
+# branch) — single source of truth. This script just toggles the flag below.
 
 
 def render_set(visual_env, base_env, dist, n_samples):
@@ -159,12 +129,11 @@ def main():
           f"n={args.n_samples}/dist, S={args.physical_size} m)")
     for res in args.resolutions:
         base_env = QuadrotorEnvV4(config_path=os.path.join(ROOT, args.quadrotor_config))
-        for target_kind, EnvCls in [('crosshair_prod', QuadrotorVisualEnv),
-                                    ('perspective_aa', PerspectiveTargetVisualEnv)]:
-            kwargs = dict(image_size=res, dr_enabled=dr)
-            if EnvCls is PerspectiveTargetVisualEnv:
-                kwargs['physical_size'] = args.physical_size
-            venv = EnvCls(base_env, **kwargs)
+        for target_kind, target_render in [('crosshair_prod', 'crosshair'),
+                                           ('perspective_aa', 'perspective')]:
+            venv = QuadrotorVisualEnv(base_env, image_size=res, dr_enabled=dr,
+                                      target_render=target_render,
+                                      physical_size=args.physical_size)
             m = measure(venv, base_env, args.distances, args.n_samples)
             results[f'{res}px/{target_kind}'] = m
             print(f"  {res:>3}px  {target_kind:<14s}  "

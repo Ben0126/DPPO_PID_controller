@@ -30,10 +30,18 @@ class QuadrotorVisualEnv(gym.Wrapper):
     Visual wrapper that renders synthetic FPV images from quadrotor state.
     """
 
-    def __init__(self, env: QuadrotorEnv, image_size: int = 64, dr_enabled: bool = True):
+    def __init__(self, env: QuadrotorEnv, image_size: int = 64, dr_enabled: bool = True,
+                 target_render: str = "crosshair", physical_size: float = 0.5):
         super().__init__(env)
         self.image_size = image_size
         self.dr_enabled = dr_enabled
+        # Target marker style. "crosshair" (default) = the production quantised cross
+        # whose half-length saturates at 2 px beyond ~2 m (the metric-range bottleneck,
+        # far-R^2~0.12). "perspective" = a non-saturating, perspective, anti-aliased
+        # disk (apparent radius ∝ 1/dist, sub-pixel AA) that keeps far-range range cues
+        # (far-R^2~0.42 at 64 px). See scripts/measure_higher_res_gate.py.
+        self.target_render = target_render
+        self.physical_size = physical_size  # world half-size of the perspective target (m)
 
         # Per-episode DR state (initialised to neutral values; overwritten in reset())
         self._dr_sky_offset    = np.zeros(3, dtype=np.int32)
@@ -177,20 +185,53 @@ class QuadrotorVisualEnv(gym.Wrapper):
 
     def _draw_target(self, image: np.ndarray, px: int, py: int,
                      target_dist: float, W: int, H: int) -> None:
-        """Draw the target crosshair in-place. Size is the ONLY metric-range
-        channel in the FPV observation.
-
-        Production behaviour (default): a quantised crosshair whose half-length is
-        ``max(2, min(6, int(6/(dist+0.5)) + dr))`` — saturates at 2 px beyond ~2 m
-        (see docs/experiment_report_image_distance_info.md). Subclasses override
-        this for the higher-res sensing gate; the rest of the scene is unchanged.
+        """Draw the target marker in-place. Size is the ONLY metric-range channel in
+        the FPV observation. Dispatches on ``self.target_render``.
         """
+        if self.target_render == "perspective":
+            self._draw_target_perspective(image, px, py, target_dist, W, H)
+        else:
+            self._draw_target_crosshair(image, px, py, target_dist, W, H)
+
+    def _draw_target_crosshair(self, image: np.ndarray, px: int, py: int,
+                               target_dist: float, W: int, H: int) -> None:
+        """Production crosshair (default). Half-length is
+        ``max(2, min(6, int(6/(dist+0.5)) + dr))`` — saturates at 2 px beyond ~2 m
+        (see docs/experiment_report_image_distance_info.md)."""
         size = max(2, min(6, int(6 / (target_dist + 0.5)) + self._dr_crosshair_d))
         for d in range(-size, size + 1):
             yc = np.clip(py + d, 0, H - 1)
             xc = np.clip(px + d, 0, W - 1)
             image[yc, px] = [255, 50, 50]
             image[py, xc] = [255, 50, 50]
+
+    def _draw_target_perspective(self, image: np.ndarray, px: int, py: int,
+                                 target_dist: float, W: int, H: int) -> None:
+        """Non-saturating, perspective, anti-aliased disk marker: apparent radius
+        (px) = (W*focal) * physical_size / dist, growing as 1/dist with no floor/cap
+        and sub-pixel (AA) gradation, so finer resolution yields finer distance
+        resolvability and the far-range (>=1.5 m) range cue is preserved
+        (far-R^2~0.42 at 64 px vs ~0.12 for the crosshair). Validated by
+        scripts/measure_higher_res_gate.py (Phase-0 Gate B)."""
+        focal = self._dr_focal_scale                       # per-episode DR focal
+        radius = (W * focal) * self.physical_size / (target_dist + 0.1)
+        radius += self._dr_crosshair_d * (W / 64.0)        # DR jitter, scaled to res
+        radius = float(np.clip(radius, 0.5, 0.45 * W))
+
+        r_ceil = int(np.ceil(radius)) + 1
+        y0, y1 = max(0, py - r_ceil), min(H, py + r_ceil + 1)
+        x0, x1 = max(0, px - r_ceil), min(W, px + r_ceil + 1)
+        if y1 <= y0 or x1 <= x0:
+            return
+        ys = np.arange(y0, y1)[:, None]
+        xs = np.arange(x0, x1)[None, :]
+        dist_c = np.sqrt((ys - py) ** 2 + (xs - px) ** 2)
+        # anti-aliased coverage: 1 inside, linear 1->0 over the outer 1 px ring
+        cov = np.clip(radius + 0.5 - dist_c, 0.0, 1.0)[..., None]   # (h,w,1)
+        patch = image[y0:y1, x0:x1].astype(np.float32)
+        color = np.array([255.0, 50.0, 50.0])
+        image[y0:y1, x0:x1] = np.clip(patch * (1 - cov) + color * cov,
+                                      0, 255).astype(np.uint8)
 
 
     def _render_depth(self) -> np.ndarray:
@@ -252,7 +293,10 @@ class QuadrotorVisualEnv(gym.Wrapper):
 
 def make_visual_env(config_path: str = "configs/quadrotor.yaml",
                     image_size: int = 64,
-                    dr_enabled: bool = True) -> QuadrotorVisualEnv:
+                    dr_enabled: bool = True,
+                    target_render: str = "crosshair",
+                    physical_size: float = 0.5) -> QuadrotorVisualEnv:
     """Factory function to create QuadrotorVisualEnv."""
     env = QuadrotorEnv(config_path=config_path)
-    return QuadrotorVisualEnv(env, image_size=image_size, dr_enabled=dr_enabled)
+    return QuadrotorVisualEnv(env, image_size=image_size, dr_enabled=dr_enabled,
+                              target_render=target_render, physical_size=physical_size)

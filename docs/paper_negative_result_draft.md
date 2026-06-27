@@ -1,12 +1,14 @@
-# Representation Collapse Is Not the Bottleneck: A Negative Result and Diagnosis for Vision-Based Quadrotor Hover
+# Representation Collapse Is Not the Bottleneck — and Neither Is Coverage or Sensing: A Negative Result and Capacity Diagnosis for Vision-Based Quadrotor Hover
 
-**Draft v0.4 — 2026-06-23.** Target: ICRA / robot-learning
-workshop (venue TBD). **Simulation-only; no real-robot claim.** This draft is assembled from the
-frozen-protocol leaderboard and the Phase 3 diagnostic reports; every number is
-reproducible from the cited script/artifact. **v0.4 re-syncs the core ablation (§5) and
-conclusion (§9) to the *official-code-faithful* Dispersive re-run (P2f, InfoNCE-L2 on the
-`flow_net` mid-block, λ=0.5, τ=0.5, with the `/d` per-dimension normalisation): the negative
-result is confirmed and the earlier "byte-identical no-op" control is overturned (§5).**
+**Draft v0.5 — 2026-06-27.** Target: ICRA / robot-learning
+workshop (venue TBD). **Simulation-only; no real-robot claim.** Every number is reproducible
+from the cited script/artifact. *Draft note (to be removed at submission):* v0.5 adds the
+decisive Teacher × Observation 2×2 (§6.4) and folds in the scale-invariant-regulariser
+ablation (§6.1); the diagnosis upgrades from "coverage/teacher-limited" to a triple
+exclusion (representation, coverage, sensing) leaving a robustness–precision capacity
+conflict, with the Abstract, §6.3, §7, §8 and §9 re-synced accordingly. The core Dispersive
+ablation (§5, official-code-faithful P2f: InfoNCE-L2 on the `flow_net` mid-block, λ=0.5,
+τ=0.5, `/d`) is unchanged.
 
 ---
 
@@ -33,21 +35,32 @@ Reaching even this null verdict required a protocol hardened against **single-se
 noise**: our own from-pixels PPO baseline swings between a 0 % and 47 % Tier-1 pass-rate
 on the training seed alone, so we report every retrained model as an **across-seed
 mean ± std** rather than a single leaderboard row.
-We then diagnose *why*: (i) Dispersive does not cure collapse — at **both** the faithful
+We then diagnose *why*. **(i)** Dispersive does not cure collapse — at **both** the faithful
 `flow_net` mid-block and an off-path placement (§6.1) it **games its own objective**,
-inflating feature norm (~9× and ~287× respectively) while the intrinsic rank gets *worse*,
-so closed-loop survival is **decoupled** from that geometry (a large rank swing leaves
-survival flat); (ii) the only real survival mover is a
-transfer/conditioning/recovery **recipe**, not Dispersive; (iii) precision is gated
-neither by representation nor by sensing. Although the 64×64 FPV cannot encode metric
-range beyond ~2 m, a renderer gate shows that loss is a fixable target artifact (a
-non-saturating target restores it at 64 px), and a positive-control **intervention**
-settles it: *handing the policy the oracle metric position error barely moves precision*
-(~36× the state oracle) and a richer cue **collapses survival** — so precision is capped
-by the absence of a learned far-range recovery behaviour (a coverage / teacher-competence
-gap), not by the observation channel. We conclude that for this class of task neither
-representation collapse nor sensing is the binding constraint. We release the protocol,
-the intervention, and all diagnostics.
+inflating feature norm (~9× and ~287× respectively) while the intrinsic rank gets *worse*;
+replacing it with two **scale-invariant** criteria (unit-sphere InfoNCE, VICReg) removes the
+norm inflation and genuinely raises effective rank (from 3.5 % to 75–85 % of dimensions),
+yet still leaves closed-loop control flat — so survival is **decoupled** from feature
+geometry whatever criterion enforces dispersion. **(ii)** The only real survival mover is a
+transfer/conditioning/recovery **recipe**, not Dispersive. **(iii)** Precision is gated by
+**neither representation, sensing, nor coverage**. A renderer gate and a positive-control
+**intervention** rule out sensing: although the 64×64 FPV cannot encode metric range beyond
+~2 m, that loss is a fixable renderer artifact (a non-saturating target restores it at
+64 px), and *handing the policy the oracle metric position error barely moves precision*
+(~36× the state oracle) while a richer cue **collapses survival**. We then build the
+competent far-range teacher and range-encoding observation this points to — a PID-CTBR
+teacher that recovers the 1–3 m band at 100 % survival (cond-IAE 0.14–0.18 m) and a
+perspective renderer that restores far-range image→distance R² 0.05→0.40 — and remove
+**both** remaining candidate constraints jointly in a pre-registered three-seed
+**Teacher × Observation 2×2** under the same frozen protocol. The floor *holds* (cond-IAE
+2.93 m, ~43× oracle, no better than the neither-factor control), and the two factors
+**negatively interact** on precision: coverage buys survival (+8–14 pp) but, stacked on the
+better-sensing cell, *worsens* precision (2.48→2.93 m). We conclude that for this class of
+task the binding constraint is none of representation collapse, sensing, or coverage, but a
+**robustness–precision conflict** — directly observed as this negative interaction — that we
+attribute to limited model capacity, the leading explanation we identify and the next lever
+to test directly. We release the protocol, both 2×2 ablations, the intervention, and all
+diagnostics.
 
 ---
 
@@ -79,14 +92,18 @@ three contributions:
    hypothesis, hardened with an **official-code-faithful** implementation (InfoNCE-L2
    on the `flow_net` mid-block, λ=0.5, `/d`), so the null result controls for
    implementation fidelity, plus a frozen-encoder control.
-3. **A mechanistic diagnosis** separating the three candidate bottlenecks
-   (representation, data coverage, sensing) and localising the real one — including a
-   positive-control *intervention* that hands the policy the oracle sensing signal and
-   shows it does **not** restore precision, isolating the teacher's far-range
-   incompetence as the binding constraint.
+3. **A mechanistic diagnosis** that *excludes* all three candidate bottlenecks
+   (representation, data coverage, sensing) rather than merely ranking them. A
+   positive-control *intervention* hands the policy the oracle sensing signal and shows it
+   does **not** restore precision (excluding sensing); a decisive, pre-registered
+   **Teacher × Observation 2×2** then supplies a *competent* far-range teacher **and** a
+   range-encoding observation jointly, and the precision floor still does not move
+   (excluding coverage). What remains is a **robustness–precision capacity conflict**.
 
-This is a negative result, but a constructive one: it redirects effort from
-representation regularisation to the observation model. Because the regulariser is
+This is a negative result, but a constructive one: by excluding representation, sensing,
+and coverage in turn it redirects effort toward model capacity and the
+robustness–precision trade-off — not the auxiliary regularisers, richer sensors, or
+data-coverage fixes a reader would reach for first. Because the regulariser is
 implemented exactly as released — placement, weight, and per-dimension normalisation
 (§3) — the null result cannot be attributed to an implementation error.
 
@@ -329,9 +346,9 @@ whereas averaging over seeds raises the all-IAE to 1.41 ± 0.89 m once the survi
 seed's drift is counted. Both baselines stay far below the 17 % ceiling; none is
 deployable.
 
-![Figure 3](figures/single_seed_swing.png)
+![Figure 1](figures/single_seed_swing.png)
 
-**Figure 3.** Per-seed Tier-1 pass-rate (left) and survival (right) for the two P1
+**Figure 1.** Per-seed Tier-1 pass-rate (left) and survival (right) for the two P1
 baselines, three training seeds each (dots, labelled s0–s2), with the across-seed
 mean ± std (diamond). PPO-from-pixels swings from 0 % (seeds 0, 2 — would read as
 "uniformly collapsed") to 47 % (seed 1) on Tier-1 from the training seed alone
@@ -374,9 +391,9 @@ frozen protocol; `evaluation_results/p2f_ablation_leaderboard.json`).
 | D0E1 | OFF / E2E    | 92.2 ± 3.1 | 65.0 ± 2.8 | 2.91 m | 12.4 % |
 | D1E1 | ON / E2E     | 90.0 ± 5.4 | 62.9 ± 2.4 | 2.89 m | 12.2 % |
 
-![Figure 5](figures/ablation_forest.png)
+![Figure 2](figures/ablation_forest.png)
 
-**Figure 5.** The 2×2 ablation as a forest plot (faithful Dispersive, 3 seeds, mean ±
+**Figure 2.** The 2×2 ablation as a forest plot (faithful Dispersive, 3 seeds, mean ±
 across-seed std). *Left:* Tier-1; the grey band is D0E1 ± the pooled across-seed std
 (6.3 pp). The decisive D1E1 (ON/E2E) sits inside it — **no Dispersive effect above seed
 noise** (−2.2 pp). The one cell that moves is D1E0 (ON/frozen, 74.4 ± 8.7), where
@@ -385,7 +402,7 @@ across all four cells. (`scripts/make_paper_figures.py` →
 `evaluation_results/p2f_ablation_leaderboard.json`.)
 
 **Findings.**
-- **Dispersive is not supported (Figure 5).** D1E1 vs D0E1: Tier-1 **−2.2 pp inside the
+- **Dispersive is not supported (Figure 2).** D1E1 vs D0E1: Tier-1 **−2.2 pp inside the
   6.3 pp pooled across-seed std**; survival −2.1 pp; conditional precision unchanged
   (2.89 vs 2.91 m). The decision rule (supported iff D1E1 beats D0E1 by more than the
   pooled std) returns **NOT supported**. The conclusion holds under the off-path,
@@ -401,7 +418,11 @@ across all four cells. (`scripts/make_paper_figures.py` →
 
 All four cells beat the prior frontier Joint_E2E_v5 (Tier-1 80 %), but §6.2 shows that
 gain is the *recipe*, not Dispersive. Precision is unmoved (cond-IAE 2.7–3.2 m, ~12–13 %
-oracle): **nothing is deployable.**
+oracle): **nothing is deployable.** This same 2×2 methodology — frozen P0, three seeds per
+cell, the pooled-std decision rule — is re-used unchanged for the second, precision-focused
+ablation in §6.4 (Teacher × Observation), so the two falsification tests rest on one
+protocol; only the manipulated factors and the primary axis (there, cond-IAE) differ, as
+each hypothesis dictates.
 
 ---
 
@@ -448,7 +469,7 @@ dimensional spread. Because `vis_pooled` feeds only the auxiliary head (§3), th
 cheapest way to satisfy the distance objective is to inflate the pooled-specific
 projection, leaving the action-relevant spatial pathway comparatively untouched.
 
-**The decisive plot is rank vs survival (Figure 1).** Effective rank swings **15×**
+**The decisive plot is rank vs survival (Figure 3).** Effective rank swings **15×**
 (30→9→2) while closed-loop survival stays flat (66.1→65.0→65.0 %, within ~3 pp std).
 **Survival is decoupled from `vis_pooled` rank.** Within this off-path probe, neither
 preventing collapse (D0E0 rank 30) nor worsening it (D1E1 rank 2) moves the closed-loop
@@ -456,9 +477,9 @@ outcome. Together with the faithful on-path null (§5), this is the paper's stro
 evidence that, *for this task*, representation collapse is not the binding constraint. The
 same pathology and decoupling hold at the faithful placement (Table 4, below).
 
-![Figure 1](figures/rank_survival_decoupling.png)
+![Figure 3](figures/rank_survival_decoupling.png)
 
-**Figure 1.** `vis_pooled` effective rank (bars, log axis) collapses ~15× across the
+**Figure 3.** `vis_pooled` effective rank (bars, log axis) collapses ~15× across the
 2×2 cells (30.3 frozen → 9.0 E2E → 2.0 E2E+Dispersive), while closed-loop survival and
 Tier-1 pass-rate (lines, right axis; error bars = across-seed std) stay flat. Survival
 is decoupled from the representation geometry Dispersive targets.
@@ -492,6 +513,37 @@ four cells the mid-feature rank swings ~7× (249→36) while survival stays with
 | D0E1 (OFF / E2E)    | 221.4 ± 16.2 | 683 | 9.49 | −0.293 | 0.163 |
 | D1E1 (ON / E2E)     | **35.9 ± 0.6** | 177 | **84.8** | **−7.624** | 0.056 |
 
+**Scale-invariant criteria cure the collapse but still do not move control (Table 5).** One
+escape remains for the faithful term: perhaps it fails only because its *scale-sensitive*
+L2-InfoNCE objective is gameable by norm inflation, and a criterion that cannot inflate its
+way out would both produce genuine dispersion *and* help control. We test this directly,
+holding the D1E1 recipe fixed and varying **only** the dispersion criterion on the same
+`flow_net` mid-block (3 seeds each, frozen protocol; `run_p6_form_ablation.py`): a
+**unit-sphere InfoNCE** (cosine; norm inflation impossible by construction) and a
+**VICReg-style** variance + covariance term. Both behave exactly as intended on the
+geometry — feature norm stays O(1) (1.33× / 1.36× the no-dispersion baseline, against the
+faithful term's 8.93×) and effective rank *rises* to **75 % / 85 %** of the 1024 dimensions
+(against the faithful term's collapse to 3.5 %): they achieve the high-rank dispersion the
+regulariser is designed for, without the cheat. Yet closed-loop control does not improve —
+all forms sit in one band (survival 60–65 %, Tier-1 82–92 %, cond-IAE 2.9–3.1 m), and the
+only metric to cross the pooled seed std does so in the *worse* direction (cond-IAE
++0.13–0.21 m). A **24× swing in mid-block effective rank (36→867) buys ≈ 0 control.** This
+closes the "you used a scale-sensitive criterion" escape and is the on-path counterpart of
+the `vis_pooled` decoupling above: representation geometry is decoupled from closed-loop
+control *regardless of which criterion enforces dispersion*.
+
+**Table 5 — scale-invariant dispersion forms** (D1E1 recipe, only the criterion varies;
+3 seeds, geometry from `measure_feature_collapse_flowmid.py`, control from frozen P0;
+`evaluation_results/p6_form_ablation_leaderboard.json`,
+`docs/experiment_report_p6_scale_invariant.md`).
+
+| Form on `flow_net` mid-block | eff_rank (of 1024) | feat_norm ÷ off | Survival | Tier-1 | cond-IAE |
+|------------------------------|-------------------:|----------------:|---------:|-------:|---------:|
+| off (D0E1, no dispersion) | 221 (22 %) | 1.00× | 65.0 ± 2.8 | 92.2 ± 3.1 | 2.91 m |
+| InfoNCE-L2 (faithful, D1E1) | 36 (3.5 %) | **8.93×** | 62.9 ± 2.4 | 90.0 ± 5.4 | 2.89 m |
+| unit-sphere InfoNCE (cosine) | **769 (75 %)** | 1.33× | 64.4 ± 3.3 | 86.7 ± 8.2 | 3.10 m |
+| VICReg (var + cov) | **867 (85 %)** | 1.36× | 60.5 ± 2.4 | 82.2 ± 11.0 | 3.03 m |
+
 ### 6.2 The only survival mover is the recipe, not Dispersive (or E2E)
 
 Decomposing the gain over the prior frontier as controlled steps
@@ -513,9 +565,12 @@ Tier-1-only bump that neither extends survival nor improves precision. Dispersiv
 nothing (slightly negative under the official configuration, ∈ noise). **Mover ranking:
 recipe ≫ E2E ≫ Dispersive ≈ 0.**
 
-### 6.3 Precision is coverage/teacher-competence-limited, not sensing-limited
+### 6.3 Precision is not sensing-gated — leaving a coverage hypothesis to test
 
 cond-IAE is ~2.8 m (~13 % oracle) for *every* configuration. Why won't precision move?
+This subsection rules out **sensing** with a renderer gate and a positive-control
+intervention, leaving a single leading candidate — a coverage / teacher-competence gap —
+which §6.4 then tests directly and also excludes.
 
 **Coverage probe** (`measure_ood_coverage.py`). Comparing position-error magnitude in
 the BC data vs the closed-loop steady state: training is overwhelmingly at-target
@@ -535,7 +590,7 @@ observation-only checks bear on it:
    recover to 0.066 m (20/20), but 3 m crashes (0/20). Even a correct offset collection
    tops out at ~2 m — below the precision-limiting regime.
 3. **The FPV image does not encode metric range** (`measure_image_distance_info.py`;
-   **Figure 2**). The only range cue is the target crosshair *size*,
+   **Figure 4**). The only range cue is the target crosshair *size*,
    `size = max(2, min(6, ⌊6/(d+0.5)⌋ + dr))`. With domain randomisation, adjacent-
    distance separability is d′ < 0.2 everywhere, and a linear decode of distance from
    the image has R² = 0.41 near (< 1 m) but only **0.12 far (≥ 1.5 m)**. With DR off
@@ -544,25 +599,25 @@ observation-only checks bear on it:
    only normalised direction (range-invariant).
 
 The policy's 2.83 m steady drift sits exactly where the observation carries **no
-recoverable metric range** (Figure 2). One might conclude that precision is
+recoverable metric range** (Figure 4). One might conclude that precision is
 *information-gated by the observation model*. That inference does not follow: a
 measurement that the FPV does not encode range does not establish that the missing range
 is the *binding* cause of imprecision. We test that implication directly with a renderer
 gate and a positive-control intervention, and **both refute it**.
 
-![Figure 2](figures/crosshair_distance_saturation.png)
+![Figure 4](figures/crosshair_distance_saturation.png)
 
-**Figure 2.** *Left:* the only FPV range cue (target crosshair size) saturates at the
+**Figure 4.** *Left:* the only FPV range cue (target crosshair size) saturates at the
 2 px floor beyond ~2 m — under domain randomisation (red band = min–max) the size is
 uninformative even nearer, and with DR off (dashed) renders at 2.0/2.5/3.0 m are
 byte-identical. The policy's steady-state drift (green, median 2.83 m) sits inside the
 saturated region. *Right:* a linear decode of distance from the image succeeds near
 (R²=0.41, <1 m) but fails far (R²=0.12, ≥1.5 m). This is a *measurement* of the
-observation, not the binding cause of imprecision (Figure 4).
+observation, not the binding cause of imprecision (Figure 5).
 
 **The information loss is a renderer artifact, not the pixel count (gate).** Before
 treating "richer sensing" as the fix, we ask whether a more capable monocular renderer
-would even *carry* the far-range information (`measure_higher_res_gate.py`; **Figure 4,
+would even *carry* the far-range information (`measure_higher_res_gate.py`; **Figure 5,
 left**). Decoding distance from the image across {64, 128, 256} px × {production
 saturating crosshair, perspective non-saturating target}, the saturating crosshair's
 far-range R² is ≈ 0 at *every* resolution (−0.01 / 0.11 / 0.04) — raising resolution
@@ -576,7 +631,7 @@ so a richer sensor would *improve*, not solve, far-range precision.
 supplies the missing channel directly: we fold the metric body-frame position error the
 FPV cannot encode (`states[:, :3]`, computed from the existing data — no re-collection)
 into the policy's conditioning, retrain the D0E1 frontier recipe unchanged, and re-eval
-under the frozen protocol (3 seeds; control = the no-cue D0E1; **Figure 4, right**).
+under the frozen protocol (3 seeds; control = the no-cue D0E1; **Figure 5, right**).
 Handed the *oracle* metric range (scalar ‖pos-err‖, σ=0), cond-IAE moves only
 2.91 → **2.43 m** — still ~36× the 0.068 m state oracle, and bought with −6.7 pp survival
 / −13 pp Tier-1. A realisable sensor (σ=0.15 m) erases even that (2.81 m ≈ control). The
@@ -587,17 +642,22 @@ so its conditional precision is an artifact, not a win. Supplying range tells th
 band teaches that.
 
 **Verdict: precision is not sensing-gated.** Range information — even oracle, even full
-position — does not restore precision, and a richer cue harms survival. The binding
-constraint is the absence of a learned far-range *recovery behaviour* in the 1–3 m band:
-the BC data has no labels there (coverage gap, above) and the teacher cannot generate
-them (the expert itself crashes from > 2 m, check 2). Moving precision would require a
-*competent far-range teacher* to generate 1–3 m coverage — not a better sensor, not a
-better policy over the existing data, and not representation regularisation. A wider-init
-BC retrain is therefore still predicted to leave cond-IAE at ~2.8 m and is not pursued.
+position — does not restore precision, and a richer cue harms survival. That leaves a
+single leading candidate, which the measurements above motivate but do **not** prove: the
+absence of a learned far-range *recovery behaviour* in the 1–3 m band. The BC data has no
+labels there (the coverage gap above) and the *current* state-PPO expert cannot generate
+them (it crashes from > 2 m, check 2). The natural inference — *precision is
+coverage / teacher-competence-gated, and would move given a competent far-range teacher* —
+is exactly the kind of "fixable-bottleneck" conclusion that a negative-result paper should
+not assert from observational probes alone. **We therefore do not stop here.** §6.4 builds
+the very thing this inference calls for — a teacher competent across the full 1–4 m band
+*and* the coverage and range-encoding observation it implies — and tests, decisively,
+whether precision then moves. (It does not: the coverage hypothesis is excluded, leaving a
+capacity conflict.)
 
-![Figure 4](figures/sensing_ablation.png)
+![Figure 5](figures/sensing_ablation.png)
 
-**Figure 4.** *Left (gate):* far-range (≥1.5 m) image→distance R² for three resolutions ×
+**Figure 5.** *Left (gate):* far-range (≥1.5 m) image→distance R² for three resolutions ×
 two target renderers. The saturating production crosshair is uninformative at every
 resolution (raising pixels does nothing); a non-saturating perspective target restores
 ~half the far-range information already at 64 px — the loss is a target artifact, not the
@@ -605,65 +665,215 @@ pixel count. *Right (intervention):* closed-loop precision (cond-IAE, 3 seeds) w
 policy is *handed* the metric position error the FPV lacks. Even the oracle scalar range
 (σ=0) leaves precision ~36× the state oracle (green dashed, 0.068 m); sensor noise erases
 the gain; the richer 3-D cue (σ=0) collapses survival (hatched; conditional IAE
-unreliable). Precision is coverage/teacher-competence-gated, not sensing-gated.
+unreliable). Precision is **not sensing-gated**; the coverage / teacher-competence
+hypothesis this points to is built and tested decisively — and also excluded — in §6.4.
+
+### 6.4 The decisive test: a competent teacher and a range-encoding observation still do not break the floor (Teacher × Observation 2×2)
+
+§6.1 excluded representation and §6.3 excluded sensing, leaving one leading hypothesis:
+precision is **coverage / teacher-competence-gated** and would move given a teacher
+competent in the 1–3 m band. A negative-result paper should not rest on that inference
+from observational probes — so we *build the fix the hypothesis demands* and test it under
+the same frozen protocol. This mirrors §5: a pre-registered 2×2, three seeds per cell,
+frozen P0, the same pooled-std decision rule; only the manipulated factors and the primary
+axis differ (here precision, cond-IAE, is primary, because precision is the question).
+
+**The two factors, each built to remove a candidate constraint.**
+
+- **Teacher coverage (T).** A cascade **PID-CTBR** controller (gentle recovery gains)
+  recovers the full **1–4 m band at 100 % survival, cond-IAE 0.14–0.18 m** (~2× the 0.068 m
+  oracle, ~18× tighter than the 2.8 m closed-loop floor) — a genuinely *competent*
+  far-range teacher, where the state-PPO expert crashes beyond 2 m (§6.3, check 2). It
+  collects far-range recovery demonstrations whose position-error mass lands **11.7 %** in
+  1–3 m (p99 = 2.59 m), versus the ~0.4 % of the hover data — a ~29× coverage jump, with
+  zero crashes. **T0** = hover-only data; **T1** = hover + this far-range recovery set.
+- **Observation (O).** **O0** is the production saturating crosshair; **O1** is the
+  non-saturating perspective target of the §6.3 gate, now integrated into the production
+  env, which restores far-range (≥ 1.5 m) image→distance R² from **0.05 to 0.40** (DR-on,
+  in-env). O1 policies are *trained and evaluated* on the perspective observation.
+
+Every cell is the **D0E1 frontier recipe** (Dispersive OFF, encoder E2E, H4-transfer init,
+task-conditioned, 500 hover + 500 recovery), so T and O are the only varying factors; the
+factors enter purely through which Phase-3 dataset is read. 12 BC runs (4 cells × seeds
+{0,1,2}), each scored through the *identical* `evaluate_frozen_p0` protocol (30 paired
+episodes, base seed 12345, σ = 2.0, n_inf = 2), with O1 cells handed their own perspective
+renderer at eval time (`evaluate_frozen_p0.py --target-render`).
+
+**Decision rule (pre-registered, mirroring §5).** The floor is "broken" iff **all** hold:
+(1) `cond-IAE(T1O1) < cond-IAE(T0O0) − pooled_std` (significant vs the neither-factor
+control); (2) `cond-IAE(T1O1) ≤ 1.5 m` (an absolute target, ~2× off the floor); (3)
+`survival(T1O1) ≥ survival(T0O0) − pooled_std` (a survival guard, because the §6.3 pos3d
+cue produced a "precision win" that was really a survival collapse); cond-IAE is trusted
+only when `n_cond ≥ 15` in both cells.
+
+**Table 6 — Teacher × Observation 2×2** (`evaluate_p2to_ablation.py`, 3 seeds, frozen
+protocol; `evaluation_results/p2to_ablation_leaderboard.json`; measured oracle 0.068 m,
+0.9668 composite). cond-IAE is the **primary** axis (lower is better); %Oracle is the
+secondary composite score, which rewards survival and precision jointly and so is not
+monotone in survival.
+
+| Cell | Teacher / Obs | **cond-IAE (mean±std)** | Survival | Tier-1 | %Oracle | n_cond |
+|------|---------------|------------------------:|---------:|-------:|--------:|-------:|
+| T0O0 | none / crosshair | **2.69 ± 0.15 m** (40× oracle) | 83.2 ± 5.8 % | 98.9 ± 1.6 % | 20.1 % | 29.7 |
+| T0O1 | none / perspective | **2.48 ± 0.14 m** (36×) | 76.7 ± 10.5 % | 86.7 ± 9.8 % | 22.1 % | 26.0 |
+| T1O0 | far-range / crosshair | **2.71 ± 0.22 m** (40×) | **91.4 ± 1.5 %** | **100.0 ± 0.0 %** | 23.1 % | 30.0 |
+| T1O1 | far-range / perspective | **2.93 ± 0.18 m** (43×) | 90.6 ± 3.3 % | 98.9 ± 1.6 % | 20.8 % | 29.7 |
+
+![Figure 6](figures/teacher_obs_2x2.png)
+
+**Figure 6.** The Teacher × Observation 2×2 (3 seeds, mean ± across-seed std). *Left:*
+cond-IAE (primary; lower = more precise) as a 2×2 grid; the green dashed line is the
+0.068 m state oracle and the whole grid sits at 36–43× it. *Right:* survival per cell.
+Coverage (T1, bottom row) lifts survival but not precision; the decisive T1O1-vs-T0O0
+contrast (arrow) is **+0.24 m — worse, and inside the 0.23 m pooled std** —
+**floor not broken**; the negative coverage×sensing interaction (T0O1 2.48 → T1O1 2.93 m)
+is annotated. (`scripts/make_paper_figures.py` →
+`evaluation_results/p2to_ablation_leaderboard.json`.)
+
+**Verdict — floor NOT broken.** The decisive T1O1-vs-T0O0 comparison fails every breaking
+criterion: cond-IAE **2.93 vs 2.69 m → Δ = +0.24 m** against a **pooled std of 0.23 m** (not
+significant — and in the *wrong* direction); 2.93 m ≫ the 1.5 m absolute target; only the
+survival guard passes (90.6 % ≥ 83.2 − 6.7 %). The floor holds across the **entire** 2×2
+(2.48–2.93 m, 20–23 % oracle); n_cond ≥ 22 everywhere, so this is not a short-survival
+artifact. **Even with the competent far-range teacher *and* the range-encoding observation
+supplied jointly, conditional hover precision does not move.**
+
+**What the grid shows — robustness ↑, precision pinned, a negative interaction.** The
+result is not flat noise; it has clean, interpretable structure that *strengthens* the
+diagnosis (`experiment_report_p2to_decisive.md`):
+
+1. **Coverage (T1) buys robustness, not precision.** Far-range recovery labels lift
+   survival **+8.2 pp** on crosshair (83.2→91.4 %) and **+13.9 pp** on perspective
+   (76.7→90.6 %) and pin Tier-1 at ~99–100 %, exactly the expected coverage benefit — yet
+   move precision by **0** (T1O0 2.71 m ≈ T0O0 2.69 m).
+2. **Sensing (O1) is a weak precision lever and is not free.** On the hover-only row it
+   improves cond-IAE 2.69→2.48 m (≈ 0.21 m, ~1× the pooled std — marginal) while drifting
+   survival 83.2→76.7 % and Tier-1 98.9→86.7 %.
+3. **The interaction is NEGATIVE.** The single best precision cell is **T0O1 (2.48 m)**;
+   adding far-range recovery on top of it (→ T1O1) *degrades* precision to **2.93 m
+   (+0.45 m)**. The very factor that buys survival pulls the policy toward wide-range
+   corrective behaviour that widens steady-state hover error.
+
+**This is a Robustness–Precision Capacity Conflict, made quantitative and RL-free.** A v5
+curriculum-RL run showed the same conflict but was confounded by RL dynamics (advantage
+masking); here it appears in a clean, three-seed **supervised** 2×2 whose decision rule was
+pre-registered before data collection (`RESEARCH_PLAN_v7.md`): within this policy's capacity
+one can have wide-range survival **or** tight hover precision, and pushing coverage trades
+the latter for the former. Two claim strengths should be kept distinct: the
+robustness–precision *conflict* is **directly observed** (the negative interaction is
+measured — survival-buying coverage costs precision, +0.45 m > the 0.23 m pooled std),
+whereas *capacity* is the **leading explanation** we advance for it, **not** a directly
+manipulated result — we did not vary model capacity here, and a precision-specialised head
+or larger backbone is the direct test (§8). The tension is the task-level signature of a
+phenomenon well documented in multi-task learning: competing objectives optimised under a
+fixed parameter budget trade off rather than co-improve — the multi-objective / Pareto view
+of Sener & Koltun [31], who note that a weighted sum of losses only works when tasks do not
+compete — and their gradients can directly conflict, so that a step improving one objective
+worsens the other (the negative-cosine "conflicting gradients" of Yu et al. [32]). Our
+coverage factor behaves as exactly such a competing objective: the gradient that buys
+survival is the one that worsens precision. Together with §6.1 (representation) and
+§6.3 (sensing), this is a **triple exclusion**: removing each of the three leading
+candidate constraints — separately and, for coverage × sensing, jointly — leaves the
+precision floor intact. The binding constraint is therefore **none of representation
+collapse, sensing, or coverage**, but a capacity / robustness–precision conflict.
 
 ---
 
 ## 7. Discussion
 
-**What generalises.** (a) The frozen protocol and the short-survival artifact it fixes
-are reusable for any survival-vs-precision visual control benchmark. (b) The
-"objective-gaming" pathology of a *scale-sensitive* dispersion regulariser on an
-*off-path* feature is a general caution: a distance-maximising contrastive term can be
-trivially satisfied by norm inflation, *worsening* intrinsic rank; one should regularise
-the feature the policy actually conditions on, and use a scale-invariant criterion. The
-faithful on-path placement (§5) closes that obvious escape — there is no auxiliary-only
-projection to inflate — yet it still does not help (no gain when the encoder is trainable;
-mildly destabilising when frozen), so neither placement rescues closed-loop control.
-(c) The rank-vs-survival decoupling argues that "prevent representation collapse" is not
-automatically the right lever for closed-loop control — the binding constraint must be
-located empirically.
+**What generalises.** *(a)* The frozen protocol and the short-survival artifact it fixes
+are reusable for any survival-vs-precision visual control benchmark. *(b)* The
+"objective-gaming" pathology of a *scale-sensitive* dispersion regulariser is a general
+caution: a distance-maximising contrastive term can be trivially satisfied by norm
+inflation, *worsening* intrinsic rank (~287× off-path, ~9× on-path; §6.1). We checked the
+two obvious escapes and both fail to rescue control. *Placement:* regularising the on-path
+feature the policy actually conditions on (§5) removes the auxiliary-only projection there
+is to inflate, yet still does not help (no gain when the encoder is trainable; mildly
+destabilising when frozen). *Criterion:* swapping in a **scale-invariant** form
+(unit-sphere InfoNCE or VICReg; §6.1) removes the norm-inflation gaming outright (feature
+norm 8.93×→~1.3×) and produces *genuine* high-rank dispersion (effective rank 3.5 %→75–85 %
+of dimensions) — the intended effect of the regulariser — yet closed-loop survival and
+precision still do not move (if anything cond-IAE regresses ~0.1–0.2 m). So neither the
+placement nor the criterion is what holds it back. *(c)* The rank-vs-survival decoupling —
+now established at both the off-path `vis_pooled` and the on-path `flow_net` mid-block, and
+across both scale-sensitive and scale-invariant criteria — argues that "prevent
+representation collapse" is not automatically the right lever for closed-loop control; the
+binding constraint must be located empirically.
 
-**What is specific.** The precision diagnosis (§6.3) is specific to a setting whose
-privileged teacher saturates inside the operating regime: our state-based PPO oracle
-itself crashes from > 2 m offset, so it cannot label the 1–3 m band where the policy
-drifts. A task with a teacher competent over the full error range — or a renderer whose
-distance cue is not the quantised crosshair we found to be artifactually saturating —
-could place the bottleneck elsewhere.
+**Coverage and sensing are jointly insufficient.** The §6.4 2×2 turns the §6.3 precision
+inference into a *test* and refutes it: supplying a competent far-range teacher (T1) and a
+range-encoding observation (O1) **together** leaves cond-IAE pinned at 2.93 m (≈ 43×
+oracle), no better than the neither-factor control. The grid also gives the
+robustness–precision trade-off its first clean, RL-free quantification on this task:
+coverage reliably buys **survival** (+8.2 pp crosshair, +13.9 pp perspective; Tier-1 →
+~100 %) but moves precision by 0, and the coverage × sensing **interaction is negative** —
+the best precision cell is T0O1 (2.48 m) and adding far-range recovery on top of it
+*worsens* precision to T1O1 (2.93 m). The factor that buys survival is the factor that
+costs precision. This reproduces, RL-free and pre-registered, the same conflict a v5
+curriculum-RL run showed under confounded dynamics: within this capacity the policy can
+spend itself on wide-range survival **or** tight hover, not both — the robustness–precision
+instance of the capacity-bound, conflicting-objective trade-off long studied in multi-task
+learning [31, 32].
 
-**Constructive implication.** Improving metric precision here is neither a representation
-nor a sensing problem: our intervention shows that even the *oracle* range, handed
-directly to the policy, barely moves precision and a richer cue collapses survival
-(§6.3). The lever is the *teacher and its coverage* — a controller that recovers from
-multi-metre offsets, generating 1–3 m demonstrations to imitate. A better sensor would
-help only once such recovery behaviour exists to be conditioned on; absent it, higher
-resolution, stereo/depth, representation regularisation, and wider naive BC coverage are
-all predicted not to move the ~2.8 m floor.
+**What is specific.** The earlier reading — that the precision floor is specific to a
+teacher saturating inside the operating regime — does **not** survive §6.4. We removed that
+specific limitation: a PID-CTBR teacher competent across the full 1–4 m band (100 %
+recovery, cond-IAE 0.14–0.18 m) labelled the 1–3 m drift band densely, and precision still
+did not move. What remains specific is the *capacity*: the conflict is a statement about
+this policy family and parameter budget (≈ 3 M trainable). A higher-capacity or
+precision-specialised architecture is the untested lever; it is out of scope for the
+pre-registered coverage × sensing question and is the natural next hypothesis.
+
+**Constructive implication.** Improving metric precision here is neither a representation,
+a sensing, **nor** a coverage problem — the three fixes a reader would reach for first are
+each excluded (§6.1, §6.3, §6.4). The intervention shows even the *oracle* range barely
+moves precision and a richer cue collapses survival (§6.3); the decisive 2×2 shows that
+even adding a competent far-range teacher's coverage on top does not move it either, and
+trades precision for survival (§6.4). The remaining lever is therefore **model capacity and
+the robustness–precision trade-off** — e.g. a dedicated precision head or a larger action
+backbone that does not have to spend representational budget on wide-range recovery to stay
+alive. Higher resolution, stereo/depth, representation regularisation, and wider BC
+coverage are all predicted not to move the ~2.8 m floor on this architecture.
 
 ---
 
 ## 8. Limitations
 
 - **Simulation only**; no real-robot validation. The renderer is synthetic and its
-  distance encoding is a design choice (a deliberately information-poor monocular cue) —
-  though the §6.3 intervention controls for this by handing the policy the oracle range
-  directly, so the precision conclusion does not hinge on the renderer's information
-  content.
-- The precision verdict is **conditional on the teacher**: our state-based PPO oracle
-  itself crashes from > 2 m offset, so "coverage/teacher-competence-gated" is established
-  for *this* teacher; a controller competent over the full error range is the untested
-  lever and the recommended next step.
-- **One task** (hover) and one policy family (flow matching with IMU-vision cross-
-  attention). The headline Dispersive null result is established at the **official
-  `flow_net` mid-block placement** (λ=0.5, τ=0.5, `/d`); we additionally probe the
-  off-path `vis_pooled` placement mechanistically (§6.1). We did not exhaustively sweep λ,
-  τ, or every candidate intermediate block, or alternative dispersion criteria — though
-  §6.1–§6.2 explain mechanistically why those are unlikely to rescue it here.
-- **Statistical power.** Three seeds per cell with a pooled across-seed Tier-1 std of
-  ~6.3 pp powers this design to detect only large effects (≳6 pp Tier-1). The result is a
-  null *in the sense of no effect above seed noise*; a smaller true effect of Dispersive —
-  and the directional, high-variance frozen-encoder degradation — cannot be sharply
-  resolved at this seed count.
+  distance encoding is a deliberate design choice (an information-poor monocular cue) — a
+  feature for the information-gated analysis but a limit on external validity: the precision
+  floor and its perspective-target remedy are established for this abstraction, not for
+  photorealistic imagery. The §6.3 intervention controls for the renderer's information
+  content (it hands the policy the oracle range directly), and the §6.4 teacher emits a CTBR
+  command forward-compatible with a PX4 offboard interface, but validation under SITL/Gazebo
+  rendering and on hardware (Jetson + PX4 MAVLink) remains future work.
+- **The verdict is a capacity statement, not a teacher-competence one.** One might expect
+  the floor to be conditional on a teacher that saturates beyond 2 m; §6.4 removes that
+  possibility by supplying a teacher competent across the full 1–4 m band (100 % recovery,
+  cond-IAE 0.14–0.18 m) — precision still does not move. The verdict is instead conditional
+  on the **policy capacity**: the robustness–precision conflict is established for this
+  policy family (flow matching with IMU-vision cross-attention, ≈ 3 M trainable), but
+  *capacity itself was not varied* — that is the leading explanation, not a manipulated
+  factor. Directly testing it with a higher-capacity or precision-specialised head is the
+  recommended next step, and is out of scope for the pre-registered coverage × sensing
+  question.
+- **Data-volume asymmetry in the T×O 2×2.** T0 cells use hover-only data (500 ep), T1 cells
+  hover + far-range recovery (1000 ep) — intrinsic to "add far-range labels". The asymmetry
+  *favours* T1, yet precision does not improve under that favourable tilt, so it does not
+  threaten the *negative* conclusion (it would matter only for a positive one). A
+  size-matched near-recovery control is the fallback if a reviewer presses.
+- **One task** (hover) and one policy family. The headline Dispersive null is established at
+  the **official `flow_net` mid-block placement** (λ=0.5, τ=0.5, `/d`); we additionally
+  probe the off-path `vis_pooled` placement (§6.1) and, beyond the official InfoNCE-L2 form,
+  two **scale-invariant** dispersion criteria (unit-sphere InfoNCE, VICReg; §6.1) that
+  remove the objective-gaming yet still do not move control. We did not exhaustively sweep
+  λ, τ, or every candidate intermediate block — though §6.1–§6.2 explain mechanistically
+  why those are unlikely to rescue it here.
+- **Statistical power.** Three seeds per cell — a pooled across-seed Tier-1 std of ~6.3 pp
+  (Dispersive 2×2) and a pooled cond-IAE std of 0.23 m (T×O 2×2) — powers these designs to
+  detect only large effects. Both results are nulls *in the sense of no effect above seed
+  noise*; a smaller true effect, and the directional high-variance frozen-encoder
+  degradation of §5, cannot be sharply resolved at this seed count.
 - T_obs = 2 frames could in principle yield range via motion parallax; we argue (and the
   flat empirical precision across all configs supports) that the 28 ms baseline and slow
   drift make this far weaker than the static size channel.
@@ -680,15 +890,28 @@ the faithful term still trains the generative network — it does not help and i
 destabilising, so the frozen-encoder condition is an informative control rather than a
 no-op. At **both** the faithful and an off-path placement the mechanism does not even cure
 the collapse it targets — it games its scale-sensitive objective and worsens intrinsic
-rank — and closed-loop survival is decoupled from that representation geometry entirely. The real levers are elsewhere: a transfer/conditioning/recovery
-recipe accounts for the survival gains, and **task precision is capped by the teacher's
-incompetence in the operating regime**, not by sensing: a positive-control intervention
-that hands the policy the oracle metric position error barely moves precision (~36× the
-state oracle) and a richer cue collapses survival, and the FPV's apparent range-blindness
-is itself a fixable renderer artifact. Neither representation collapse nor the sensing
-channel is the binding constraint for this task; the missing far-range recovery behaviour
-is. We release the protocol, the ablation, the intervention, and all diagnostics so the
-result and its diagnosis are reproducible.
+rank — and two **scale-invariant** criteria that *do* cure the collapse (effective rank to
+75–85 % of dimensions, no norm inflation) still leave closed-loop control flat: survival is
+decoupled from representation geometry whatever criterion enforces it.
+
+We then ran the diagnosis to its end. The survival gains come from a
+transfer/conditioning/recovery **recipe**, not Dispersive. And task precision — pinned at
+cond-IAE ≈ 2.8 m, ~13 % of the state oracle, across every configuration — is gated by
+**none** of the three leading candidates. A positive-control intervention rules out
+**sensing** (handing the policy the oracle metric position error barely moves precision,
+~36× the state oracle; a richer cue collapses survival; the FPV's range-blindness is itself
+a fixable renderer artifact). A decisive, pre-registered **Teacher × Observation 2×2** then
+rules out **coverage**: a teacher competent across the full 1–4 m band and a range-encoding
+observation, supplied jointly, leave the floor at 2.93 m (no better than the neither-factor
+control), and coverage and sensing *negatively interact* — coverage buys survival but costs
+precision. The binding constraint for this task is therefore neither representation
+collapse, nor sensing, nor coverage, but a **robustness–precision conflict** — directly
+observed as that negative interaction — which we attribute to limited model capacity. That
+attribution is the leading explanation, not a manipulated result; the next hypothesis to
+test directly is model capacity — a precision-specialised head or a larger backbone — which
+lies outside the pre-registered coverage × sensing question of this study. We release the
+protocol, both 2×2 ablations, the intervention, and all diagnostics so the result and its
+diagnosis are reproducible.
 
 ---
 
@@ -702,11 +925,13 @@ result and its diagnosis are reproducible.
 | legacy 2×2 ablation (off-path, §6.1 probe) | `scripts/run_p2_ablation.py`, `scripts/evaluate_p2_ablation.py` | `evaluation_results/p2_ablation_{manifest,leaderboard}.json` |
 | §6.1 feature geometry — off-path `vis_pooled` (Table 3) | `scripts/measure_feature_collapse.py` | `evaluation_results/p2_feature_collapse.json` — `docs/experiment_report_feature_collapse.md` |
 | §6.1 feature geometry — faithful `flow_net` mid-block (Table 4) | `scripts/measure_feature_collapse_flowmid.py` | `evaluation_results/p2f_feature_collapse_flowmid.json` |
+| §6.1 scale-invariant dispersion forms (Table 5) | `scripts/run_p6_form_ablation.py` (→ `train_flow_v5.py --dispersive-form {cosine,vicreg}`), `scripts/evaluate_p6_form_ablation.py` | `evaluation_results/p6_form_ablation_{manifest,leaderboard}.json` — `docs/experiment_report_p6_scale_invariant.md` |
 | §6.2 survival movers | — | `docs/experiment_report_survival_movers.md` |
 | §6.3 coverage probe | `scripts/measure_ood_coverage.py` | `evaluation_results/p3b_ood_coverage.json` — `docs/experiment_report_ood_coverage.md` |
 | §6.3 image-distance info | `scripts/measure_image_distance_info.py` | `evaluation_results/p3b_image_distance_info{,_nodr}.json` — `docs/experiment_report_image_distance_info.md` |
-| §6.3 higher-res gate (Fig 4 left) | `scripts/measure_higher_res_gate.py` | `evaluation_results/p3b_higher_res_gate.json` — `docs/experiment_report_sensing_ablation.md` |
-| §6.3 range-cue intervention, 3 seeds (Fig 4 right) | `scripts/run_p3b_rangecue.py` (→ `train_flow_v5.py --range-cue`, `evaluate_frozen_p0.py --cue-noise`) | `evaluation_results/p3b_rc_{clean,noised}{,_s12}_frozen.json` — `docs/experiment_report_sensing_ablation.md` |
+| §6.3 higher-res gate (Fig 5 left) | `scripts/measure_higher_res_gate.py` | `evaluation_results/p3b_higher_res_gate.json` — `docs/experiment_report_sensing_ablation.md` |
+| §6.3 range-cue intervention, 3 seeds (Fig 5 right) | `scripts/run_p3b_rangecue.py` (→ `train_flow_v5.py --range-cue`, `evaluate_frozen_p0.py --cue-noise`) | `evaluation_results/p3b_rc_{clean,noised}{,_s12}_frozen.json` — `docs/experiment_report_sensing_ablation.md` |
+| §6.4 decisive Teacher × Observation 2×2 (Table 6, Fig 6) | `scripts/collect_data_v7_pidctbr.py`, `scripts/run_p2to_ablation.py` (→ `train_flow_v5.py --hover-h5`), `scripts/evaluate_p2to_ablation.py` (→ `evaluate_frozen_p0.py --target-render`) | `evaluation_results/p2to_ablation_{manifest,leaderboard}.json` — `docs/experiment_report_p2to_decisive.md` |
 
 Frozen protocol: 30 episodes, base seed 12345, σ = 2.0 exp-decay composite, paired init,
 conditional-IAE over episodes surviving ≥ 250/500 steps, bootstrap 95% CI, measured PPO
@@ -719,7 +944,9 @@ oracle 0.9668.
 > Sources retrieved via NotebookLM (notebook *Generative RL & Flow Policy Research*,
 > 2026-06-19). All author lists, venues, and identifiers were verified against the
 > publisher of record (arXiv / official proceedings) on 2026-06-19; no entries remain
-> unverified.
+> unverified. References [31]–[32] (multi-task capacity / conflicting-gradient anchors for
+> the §6.4 capacity conclusion) were added and verified against arXiv / NeurIPS proceedings
+> on 2026-06-27.
 
 [1] J. Ho, A. Jain, P. Abbeel. "Denoising Diffusion Probabilistic Models." *NeurIPS*, 2020.
 
@@ -815,3 +1042,9 @@ arXiv:2108.13264.
 
 [30] A. Patterson, S. Neumann, M. White, A. White. "Empirical Design in Reinforcement
 Learning." *Journal of Machine Learning Research*, 25, 2024. arXiv:2304.01315.
+
+[31] O. Sener, V. Koltun. "Multi-Task Learning as Multi-Objective Optimization."
+*NeurIPS*, 2018. arXiv:1810.04650.
+
+[32] T. Yu, S. Kumar, A. Gupta, S. Levine, K. Hausman, C. Finn. "Gradient Surgery for
+Multi-Task Learning." *NeurIPS*, 2020. arXiv:2001.06782.

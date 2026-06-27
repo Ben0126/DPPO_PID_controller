@@ -72,8 +72,44 @@ class FlowDatasetV5(Dataset):
         self.cue_scale = cue_scale
         self.cue_dim = {'none': 0, 'scalar': 1, 'pos3d': 3}[range_cue_mode]
 
-        img_buf, imu_buf, act_buf, tilt_buf, state_buf, task_buf = [], [], [], [], [], []
+        # Memory-robust image buffering. Stacking a Python list of N (6,64,64)
+        # uint8 windows via np.stack allocates the full ~10.7 GB output WHILE the
+        # list still holds its ~10.7 GB of inputs -> a ~2x (~21 GB) transient peak
+        # that exceeds the process commit headroom on this ~12 GB-free machine and
+        # OOMs the 1000-episode T1 cells. To avoid the double-buffer peak, pass-1
+        # (shapes/attrs only, NO image data loaded) counts the windows so the image
+        # array can be pre-allocated once and written into directly in pass-2. The
+        # resulting self._img_arr is byte-identical to the old np.stack(img_buf);
+        # only the construction memory profile changes (equivalence-tested).
+        n_windows = 0
+        img_shape = None
+        img_dtype = np.uint8
+        for h5_path, episode_indices in sources:
+            with h5py.File(h5_path, 'r') as f:
+                for ep_idx in episode_indices:
+                    key = f'episode_{ep_idx}'
+                    if key not in f:
+                        continue
+                    ep_attrs = f[key].attrs
+                    ep_type  = ep_attrs.get('episode_type', 'hover')
+                    is_rec = ('init_tilt_deg' in ep_attrs or ep_type == 'recovery')
+                    if hover_only and is_rec:
+                        continue
+                    ishape = f[key]['images'].shape       # (T_ep, C, H, W) — lazy, no load
+                    T = f[key]['actions'].shape[0]
+                    n = (T - T_pred) - (T_obs - 1)
+                    if n <= 0:
+                        continue
+                    n_windows += n
+                    if img_shape is None:
+                        img_shape = (T_obs * ishape[1], ishape[2], ishape[3])
+                        img_dtype = f[key]['images'].dtype
+
+        self._img_arr = (np.empty((n_windows, *img_shape), dtype=img_dtype)
+                         if n_windows > 0 else np.empty((0,), dtype=img_dtype))
+        imu_buf, act_buf, tilt_buf, state_buf, task_buf = [], [], [], [], []
         skipped_count = 0
+        wi = 0
 
         for h5_path, episode_indices in sources:
             print(f"  Loading {len(episode_indices)} episodes from {h5_path} ...")
@@ -97,7 +133,8 @@ class FlowDatasetV5(Dataset):
                     T = acts.shape[0]
                     for start in range(T_obs - 1, T - T_pred):
                         frames = imgs[start - T_obs + 1 : start + 1]
-                        img_buf.append(np.concatenate(frames, axis=0))
+                        self._img_arr[wi] = np.concatenate(frames, axis=0)
+                        wi += 1
                         imu_buf.append(imus[start])
                         act_buf.append(acts[start + 1 : start + 1 + T_pred].T)
                         s = states_ep[start]
@@ -116,7 +153,7 @@ class FlowDatasetV5(Dataset):
                             cue = cue / self.cue_scale
                             task_buf.append(np.concatenate([task_label, cue]))
 
-        self._img_arr   = np.stack(img_buf)
+        assert wi == n_windows, f"window count mismatch: filled {wi} != counted {n_windows}"
         self._imu_arr   = np.stack(imu_buf)
         self._act_arr   = np.stack(act_buf)
         self._tilt_arr  = np.array(tilt_buf, dtype=np.float32)
@@ -217,7 +254,14 @@ def train(args):
     # ------------------------------------------------------------------
     # Dataset split
     # ------------------------------------------------------------------
-    h5_path = train_cfg['dataset_path']
+    # --hover-h5 overrides the hover-pool path baked into the config. The
+    # observation (crosshair vs perspective target) is rendered INTO the h5 at
+    # collection time — FlowDatasetV5 reads f[key]['images'] with no render flag —
+    # so an O1 (perspective) cell must point the hover pool at a perspective h5
+    # (e.g. data/expert_demos_v7_hover_persp.h5). Config default is left untouched.
+    h5_path = args.hover_h5 if args.hover_h5 else train_cfg['dataset_path']
+    if args.hover_h5:
+        print(f"[--hover-h5] hover pool overridden: {train_cfg['dataset_path']} -> {h5_path}")
     with h5py.File(h5_path, 'r') as f:
         n_ep = f.attrs['n_episodes']
 
@@ -410,6 +454,7 @@ def train(args):
                     lambda_dispersive=args.lambda_disp,
                     dispersive_target=args.dispersive_target,
                     dispersive_tau=args.dispersive_tau,
+                    dispersive_form=args.dispersive_form,
                 )
             scaler.scale(total_loss).backward()
             scaler.unscale_(optimizer)
@@ -455,6 +500,7 @@ def train(args):
                         lambda_dispersive=args.lambda_disp,
                         dispersive_target=args.dispersive_target,
                         dispersive_tau=args.dispersive_tau,
+                        dispersive_form=args.dispersive_form,
                     )
                 val_flow  += comp['flow_loss'].item()
                 val_state += comp['state_loss'].item()
@@ -497,6 +543,11 @@ if __name__ == '__main__':
         description='Phase 3a v5.0: Flow Matching BC with cross-attn + state aux')
     parser.add_argument('--config', type=str, default='configs/flow_policy_v5.yaml')
     parser.add_argument('--quick', action='store_true', help='5-epoch smoke test')
+    parser.add_argument('--hover-h5', type=str, default=None,
+                        help='Override the hover-pool dataset_path (config default = '
+                             'expert_demos_v4.h5, old PPO crosshair). For a P2TO O1 (perspective) '
+                             'cell point this at a perspective-rendered hover h5 so the baked-in '
+                             'observation matches the perspective eval env.')
     parser.add_argument('--recovery-h5', type=str, default=None)
     parser.add_argument('--recovery-episodes', type=int, default=0)
     parser.add_argument('--hover-episodes', type=int, default=0)
@@ -529,6 +580,13 @@ if __name__ == '__main__':
                              "InfoNCE-L2 on the flow_net mid-block intermediate representation.")
     parser.add_argument('--dispersive-tau', type=float, default=0.5,
                         help='InfoNCE temperature for the flow_mid faithful dispersive loss (default 0.5)')
+    parser.add_argument('--dispersive-form', choices=['infonce', 'cosine', 'vicreg'],
+                        default='infonce',
+                        help="Functional form of the flow_mid dispersive loss (Phase 6 / Dir 4). "
+                             "'infonce' = faithful InfoNCE-L2 with /d (DEFAULT, byte-identical to "
+                             "P2f); 'cosine' = scale-invariant unit-sphere InfoNCE (no /d); "
+                             "'vicreg' = scale-invariant variance+covariance regulariser. Only "
+                             "affects the --dispersive-target flow_mid path.")
     parser.add_argument('--seed', type=int, default=None,
                         help='Seed python/numpy/torch for reproducible P2 ablation runs')
     parser.add_argument('--tag', type=str, default=None,

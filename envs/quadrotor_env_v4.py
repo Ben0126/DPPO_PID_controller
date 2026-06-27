@@ -322,6 +322,14 @@ class QuadrotorEnvV4(gym.Env):
         else:
             self._generate_new_waypoint()
 
+        # Optional fixed setpoint offset: shifts the hover/waypoint target by a
+        # caller-supplied vector so the drone must FLY to a setpoint `offset` away
+        # from its start. Used by the Phase-0 recovery audit and reused by the
+        # Phase-1 wide-init teacher retrain. Default (options=None) is unchanged.
+        if options and 'setpoint_offset' in options:
+            self.target_position = self.target_position + np.asarray(
+                options['setpoint_offset'], dtype=float)
+
         self.time_since_target_change = 0.0
         self.current_step             = 0
         self.disturbance_active       = False

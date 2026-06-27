@@ -88,22 +88,24 @@ class CascadePIDController:
         """Reset integrators — call at the start of every episode."""
         self._vel_int = np.zeros(3)
 
-    def compute_action(self, state: np.ndarray, target: np.ndarray) -> np.ndarray:
+    def _outer_loop(self, state: np.ndarray, target: np.ndarray):
         """
-        Compute 4D motor action for one outer-loop step.
+        Cascade Levels 1–3: position/velocity/attitude → collective thrust + rate
+        setpoint. Shared by both the motor-output path (``compute_action``) and the
+        CTBR-output path (``compute_ctbr_action``).
 
         Args:
             state:  13D dynamics state [pos(3), quat(4), vel(3), omega(3)]
             target: 3D target position in world NED frame
 
         Returns:
-            action: (4,) float32, each ∈ [-1, 1]
+            F_total:   collective thrust [N]
+            omega_cmd: desired body rates [rad/s] (3,), clipped to ±omega_max
         """
         p = self.p
         pos   = state[0:3]
         quat  = state[3:7]    # [qw, qx, qy, qz]
         vel   = state[7:10]   # world NED
-        omega = state[10:13]  # body frame
 
         R = _quat_to_matrix(quat)   # body-to-world
 
@@ -143,6 +145,23 @@ class CascadePIDController:
             self.Kp_att_yaw * att_err[2],
         ])
         omega_cmd = np.clip(omega_cmd, -self.omega_max, self.omega_max)
+        return F_total, omega_cmd
+
+    def compute_action(self, state: np.ndarray, target: np.ndarray) -> np.ndarray:
+        """
+        Compute 4D motor action for one outer-loop step.
+
+        Args:
+            state:  13D dynamics state [pos(3), quat(4), vel(3), omega(3)]
+            target: 3D target position in world NED frame
+
+        Returns:
+            action: (4,) float32, each ∈ [-1, 1]
+        """
+        p = self.p
+        omega = state[10:13]  # body frame (current rates, for the Level 4 rate loop)
+
+        F_total, omega_cmd = self._outer_loop(state, target)
 
         # ── Level 4: Rate P → torques (body frame) ────────────────────────────
         omega_err = omega_cmd - omega
@@ -164,6 +183,30 @@ class CascadePIDController:
         # Map [0, motor_max_thrust] → [-1, 1]
         action = T / p.motor_max_thrust * 2.0 - 1.0
         return action.astype(np.float32)
+
+    def compute_ctbr_action(self, state: np.ndarray, target: np.ndarray,
+                            f_c_max: float, omega_max: np.ndarray) -> np.ndarray:
+        """
+        Compute a normalized CTBR action for the v4 (INDI) env, bypassing the
+        motor mixer. Output is the exact inverse of
+        ``QuadrotorEnvV4._decode_action``:
+            F_c   = (a[0] + 1) * 0.5 * f_c_max      →  a[0]   = F_total / f_c_max * 2 - 1
+            omega = a[1:4] * omega_max              →  a[1:4] = omega_cmd / omega_max
+
+        Args:
+            state:     13D dynamics state [pos(3), quat(4), vel(3), omega(3)]
+            target:    3D target position in world NED frame
+            f_c_max:   env.F_c_max  (collective-thrust normalisation, [N])
+            omega_max: env.omega_max  (per-axis rate normalisation, [rad/s], (3,))
+
+        Returns:
+            action: (4,) float32  [F_c_norm, wx_norm, wy_norm, wz_norm] ∈ [-1, 1]
+        """
+        F_total, omega_cmd = self._outer_loop(state, target)
+        f_c_norm   = np.clip(F_total / f_c_max * 2.0 - 1.0, -1.0, 1.0)
+        omega_norm = np.clip(omega_cmd / np.asarray(omega_max, dtype=float),
+                             -1.0, 1.0)
+        return np.concatenate([[f_c_norm], omega_norm]).astype(np.float32)
 
     def _R_from_des_z(self, des_z: np.ndarray) -> np.ndarray:
         """

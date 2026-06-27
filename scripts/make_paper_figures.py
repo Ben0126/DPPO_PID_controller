@@ -1,22 +1,35 @@
 """
-Generate the two headline figures for the negative-result paper, reading numbers
-straight from the frozen artifacts (no hand-transcription):
+Generate the figures for the negative-result paper, reading numbers straight from the
+frozen artifacts (no hand-transcription). Figure numbers follow appearance order in
+docs/paper_negative_result_draft.md (the figN_* function names below match these):
 
-  Fig 1  rank_survival_decoupling.png
-         `vis_pooled` effective rank swings ~15x across the 2x2 cells while
-         closed-loop survival / Tier-1 stay flat -> representation collapse is not
-         the binding constraint.  (Phase 3a + P2 leaderboard.)
-
-  Fig 2  crosshair_distance_saturation.png
-         The only FPV range cue (target crosshair size) saturates at 2 px beyond
-         ~2 m, where the policy actually operates -> precision is information-gated.
-         (Phase 3b image-distance-info + OOD coverage.)
-
-  Fig 3  single_seed_swing.png
+  Fig 1  single_seed_swing.png  (Sec 4)
          Per-seed Tier-1 / survival of the two P1 baselines (3 seeds each):
          PPO-from-pixels swings 0% <-> 47% Tier-1 on the training seed alone, so a
          single-seed leaderboard row is unsafe -> report across-seed mean +/- std.
-         (Sec 4 P1 baselines.)
+
+  Fig 2  ablation_forest.png  (Sec 5)
+         The Dispersive x E2E 2x2 as a forest plot; the decisive D1E1-vs-D0E1 contrast
+         sits inside the pooled across-seed std -> no Dispersive effect above seed noise.
+
+  Fig 3  rank_survival_decoupling.png  (Sec 6.1)
+         `vis_pooled` effective rank swings ~15x across the 2x2 cells while closed-loop
+         survival / Tier-1 stay flat -> representation collapse is not the binding constraint.
+
+  Fig 4  crosshair_distance_saturation.png  (Sec 6.3)
+         The only FPV range cue (target crosshair size) saturates at 2 px beyond ~2 m,
+         where the policy operates -> a measurement (see Fig 5: it is a fixable artifact).
+
+  Fig 5  sensing_ablation.png  (Sec 6.3)
+         Left: higher-res gate (far-range info is a target artifact, not pixel count).
+         Right: range-cue intervention (even the oracle range barely moves precision).
+
+  Fig 6  teacher_obs_2x2.png  (Sec 6.4)
+         The decisive Teacher x Observation 2x2: cond-IAE grid (primary) + survival.
+         Supplying BOTH a competent far-range teacher (T1) AND a range-encoding
+         perspective observation (O1) leaves the floor at 2.93 m (~43x oracle, no better
+         than the neither-factor control) -> FLOOR NOT BROKEN; coverage buys survival but
+         coverage x sensing interact negatively on precision.  (Phase 4 / p2to leaderboard.)
 
 Usage:
   dppo/Scripts/python.exe -m scripts.make_paper_figures
@@ -40,7 +53,7 @@ def load(name):
         return json.load(f)
 
 
-def fig1_rank_survival():
+def fig3_rank_survival():
     fc = load('p2_feature_collapse.json')['by_cell']
     lb = load('p2_ablation_leaderboard.json')['cell_agg']
 
@@ -99,7 +112,7 @@ def fig1_rank_survival():
     print(f'wrote {out}')
 
 
-def fig2_crosshair_saturation():
+def fig4_crosshair_saturation():
     on = load('p3b_image_distance_info.json')
     off = load('p3b_image_distance_info_nodr.json')
     cov = load('p3b_ood_coverage.json')
@@ -166,7 +179,7 @@ def fig2_crosshair_saturation():
     axB.axhline(0, color='k', lw=0.8)
 
     fig.suptitle('Measurement: the FPV cannot encode metric range where the policy operates '
-                 '(but see Fig. 4 — this is a fixable artifact, and range is not what gates precision)',
+                 '(but see Fig. 5 — this is a fixable artifact, and range is not what gates precision)',
                  fontsize=10.5, y=1.04)
     fig.tight_layout()
     out = os.path.join(FIGDIR, 'crosshair_distance_saturation.png')
@@ -217,7 +230,7 @@ def _rangecue_agg():
     return out
 
 
-def fig4_sensing_ablation():
+def fig5_sensing_ablation():
     """Panel A: higher-res gate — far-range R² for 3 resolutions x {saturating crosshair,
     perspective target}; the info loss is a target artifact, not the pixel count.
     Panel B: range-cue intervention — even the oracle metric range barely moves cond-IAE
@@ -287,7 +300,7 @@ def fig4_sensing_ablation():
     print(f'wrote {out}')
 
 
-def fig3_single_seed_swing():
+def fig1_single_seed_swing():
     """Single-seed unreliability: per-seed Tier-1 / survival spread of the two P1
     baselines (3 seeds each), with the across-seed mean +/- std. Numbers read
     straight from the seed-aggregate artifact (per_seed = fractions 0-1; the
@@ -340,7 +353,7 @@ def fig3_single_seed_swing():
     print(f'wrote {out}')
 
 
-def fig5_ablation_forest():
+def fig2_ablation_forest():
     """2x2 ablation forest plot (faithful Dispersive, p2f): Tier-1 and survival per
     cell with across-seed mean +/- std. The decisive D1E1-vs-D0E1 contrast falls
     inside the pooled across-seed std -> Dispersive has no effect above seed noise."""
@@ -399,13 +412,103 @@ def fig5_ablation_forest():
     print(f'wrote {out}')
 
 
+def fig6_teacher_obs_2x2():
+    """The decisive Teacher x Observation 2x2 (Sec 6.4). Left: cond-IAE (primary) as a
+    2x2 grid, the whole grid 36-43x the 0.068 m state oracle, with the decisive
+    T1O1-vs-T0O0 verdict and the NEGATIVE coverage x sensing interaction annotated.
+    Right: survival per cell -- coverage (T1) buys +8-14 pp survival but moves precision 0.
+    All numbers read straight from p2to_ablation_leaderboard.json (FLOOR NOT BROKEN)."""
+    lb = load('p2to_ablation_leaderboard.json')
+    cells = lb['cell_agg']
+    v = lb['verdict']
+    # measured state-PPO oracle cond-IAE = 0.0675 m, displayed (and used for ×-oracle in the
+    # report/Table 6) at 3 d.p. as 0.068 m so the per-cell multiples match the paper exactly.
+    ORACLE_IAE = 0.068
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(11.2, 4.7),
+                                   gridspec_kw={'width_ratios': [1.12, 1.0]})
+
+    # ----- Left: cond-IAE 2x2 grid (PRIMARY axis) -----
+    # rows top->bottom: T1 (+far recovery), T0 (hover-only); cols: O0 crosshair, O1 perspective
+    grid = [['T1O0', 'T1O1'], ['T0O0', 'T0O1']]
+    iae = np.array([[cells[c]['cond_iae_mean'] for c in row] for row in grid])
+    axL.imshow(iae, cmap='RdYlGn_r', vmin=2.30, vmax=3.10, aspect='auto')
+    axL.set_xticks([0, 1]); axL.set_xticklabels(['O0\ncrosshair', 'O1\nperspective'])
+    axL.set_yticks([0, 1]); axL.set_yticklabels(['T1\n+far recovery', 'T0\nhover-only'])
+    axL.set_title('Precision — cond-IAE (m, PRIMARY; lower = better)\n'
+                  'whole grid 36–43× the 0.068 m state oracle', fontsize=10)
+    for i, row in enumerate(grid):
+        for j, c in enumerate(row):
+            m, s = cells[c]['cond_iae_mean'], cells[c]['cond_iae_std']
+            axL.text(j, i - 0.04, f'{c}\n{m:.2f} ± {s:.2f} m\n({m/ORACLE_IAE:.0f}× oracle)',
+                     ha='center', va='center', fontsize=9.6, fontweight='bold', color='#111')
+    # highlight the two decisive cells: control T0O0 (bottom-left) & both-factor T1O1 (top-right)
+    axL.add_patch(plt.Rectangle((-0.5, 0.5), 1, 1, fill=False, ec='#2c3e50',
+                                lw=2.0, ls=':', zorder=5))      # T0O0
+    axL.add_patch(plt.Rectangle((0.5, -0.5), 1, 1, fill=False, ec='#7f0000',
+                                lw=2.4, zorder=5))               # T1O1
+    axL.text(0.0, 1.34, 'control', color='#2c3e50', fontsize=8.0, ha='center', style='italic')
+    axL.text(1.0, -0.40, 'both factors', color='#7f0000', fontsize=8.0, ha='center',
+             style='italic', fontweight='bold')
+    # NEGATIVE interaction arrow: best precision T0O1 (bottom-right) -> T1O1 (top-right) worsens.
+    # Compute from the 2-d.p. displayed means so the figure matches Table 6 (2.93 - 2.48 = +0.45).
+    di = round(cells['T1O1']['cond_iae_mean'], 2) - round(cells['T0O1']['cond_iae_mean'], 2)
+    axL.annotate('', xy=(1.34, 0.0), xytext=(1.34, 1.0),
+                 arrowprops=dict(arrowstyle='->', color='#7f0000', lw=2.0))
+    axL.text(1.40, 0.5, f'+ far recovery\n{di:+.2f} m\n(precision WORSE)', color='#7f0000',
+             fontsize=8.2, ha='left', va='center', fontweight='bold')
+    axL.set_xlim(-0.5, 2.05)
+
+    # ----- Right: survival per cell -----
+    groups = ['T0\nhover-only', 'T1\n+far recovery']
+    o0 = [cells['T0O0'], cells['T1O0']]
+    o1 = [cells['T0O1'], cells['T1O1']]
+    x = np.arange(2); w = 0.36
+    bo0 = axR.bar(x - w/2, [c['survival_mean']*100 for c in o0], w,
+                  yerr=[c['survival_std']*100 for c in o0], capsize=4,
+                  color='#c0392b', edgecolor='k', alpha=0.85, label='O0 crosshair')
+    bo1 = axR.bar(x + w/2, [c['survival_mean']*100 for c in o1], w,
+                  yerr=[c['survival_std']*100 for c in o1], capsize=4,
+                  color='#27ae60', edgecolor='k', alpha=0.85, label='O1 perspective')
+    for bars, cs in ((bo0, o0), (bo1, o1)):
+        for b, c in zip(bars, cs):
+            axR.text(b.get_x() + b.get_width()/2, b.get_height() + c['survival_std']*100 + 1.5,
+                     f"{c['survival_mean']*100:.0f}%", ha='center', va='bottom', fontsize=9)
+    # coverage lift arrows (T0 -> T1) per renderer
+    d_cross = (cells['T1O0']['survival_mean'] - cells['T0O0']['survival_mean']) * 100
+    d_persp = (cells['T1O1']['survival_mean'] - cells['T0O1']['survival_mean']) * 100
+    axR.annotate(f'+{d_cross:.0f} pp', xy=(1 - w/2, 94), xytext=(0.30, 70),
+                 fontsize=8.6, color='#c0392b', fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', color='#c0392b', lw=1.3))
+    axR.annotate(f'+{d_persp:.0f} pp', xy=(1 + w/2, 94), xytext=(1.10, 62),
+                 fontsize=8.6, color='#27ae60', fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', color='#27ae60', lw=1.3))
+    axR.set_xticks(x); axR.set_xticklabels(groups)
+    axR.set_ylim(0, 108); axR.set_ylabel('survival %')
+    axR.set_title('Robustness — survival\ncoverage (T1) buys +8–14 pp; precision (left) unmoved',
+                  fontsize=10)
+    axR.legend(loc='lower right', fontsize=8.5, framealpha=0.9)
+
+    delta = v['cond_iae_delta']; pooled = v['pooled_std_iae']
+    verdict = 'FLOOR NOT BROKEN' if not v['FLOOR_BROKEN'] else 'FLOOR BROKEN'
+    fig.suptitle(f'Teacher × Observation 2×2 (3 seeds, frozen P0): {verdict} — '
+                 f'T1O1−T0O0 = {delta:+.2f} m (pooled std {pooled:.2f} m), '
+                 f'precision pinned, coverage×sensing interaction negative',
+                 fontsize=10.6, y=1.02)
+    fig.tight_layout()
+    out = os.path.join(FIGDIR, 'teacher_obs_2x2.png')
+    fig.savefig(out, dpi=200, bbox_inches='tight'); plt.close(fig)
+    print(f'wrote {out}')
+
+
 def main():
     os.makedirs(FIGDIR, exist_ok=True)
-    fig1_rank_survival()
-    fig2_crosshair_saturation()
-    fig3_single_seed_swing()
-    fig4_sensing_ablation()
-    fig5_ablation_forest()
+    fig1_single_seed_swing()
+    fig2_ablation_forest()
+    fig3_rank_survival()
+    fig4_crosshair_saturation()
+    fig5_sensing_ablation()
+    fig6_teacher_obs_2x2()
     print(f'\nFigures in {FIGDIR}')
 
 

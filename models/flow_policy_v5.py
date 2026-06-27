@@ -223,6 +223,60 @@ class FlowMatchingPolicyV5(nn.Module):
         D = (torch.cdist(features, features, p=2) ** 2) / d     # (B, B) per-dim squared L2
         return torch.log(torch.exp(-D / tau).mean())
 
+    @staticmethod
+    def _dispersive_loss_cosine(features: torch.Tensor, tau: float = 0.5) -> torch.Tensor:
+        """
+        Scale-invariant (unit-sphere) variant of the InfoNCE-L2 Dispersive Loss
+        (Phase 6 / RESEARCH_PLAN_v7 Direction 4). Each feature vector is L2-normalised
+        onto the unit hypersphere, then repelled by the SAME InfoNCE-L2 form on the
+        angular (cosine) distance:
+            z      = features / ||features||_2
+            D      = ||z_i - z_j||^2   ( = 2 - 2 cos(z_i, z_j),  bounded in [0, 4] )
+            L_disp = log E_{i,j}[ exp( -D / tau ) ]
+        Unlike the faithful `_dispersive_loss_infonce`, the per-dimension `/d`
+        normalisation is DROPPED here: on the unit sphere the squared L2 is already
+        O(1) (in [0, 4]), so dividing by d (~1024) would shrink D to ~4/d and saturate
+        exp(-D/tau) -> 1 (vanishing gradient). Without /d the repulsion stays in force
+        while the unit-sphere projection pins feat_norm to a constant 1 by construction,
+        so the norm-inflation channel that lets infonce game its objective (feat_norm
+        ~9x on flow_mid, ~287x off-path; §6.1) is STRUCTURALLY IMPOSSIBLE here. Same
+        diagonal (i=j) convention as the faithful term.
+        """
+        B = features.shape[0]
+        if B < 2:
+            return features.sum() * 0.0
+        z = F.normalize(features.float(), dim=1)
+        D = torch.cdist(z, z, p=2) ** 2                         # (B, B) angular squared L2
+        return torch.log(torch.exp(-D / tau).mean())
+
+    @staticmethod
+    def _dispersive_loss_vicreg(features: torch.Tensor, gamma: float = 1.0,
+                                eps: float = 1e-4) -> torch.Tensor:
+        """
+        Scale-invariant VICReg-style regulariser (Bardes et al., ICLR 2022) — the second
+        Phase 6 scale-invariant control whose objective cannot be lowered by norm inflation:
+            variance   = mean_j max(0, gamma - std_j),   std_j = sqrt(Var(z_:,j) + eps)
+            covariance = (1/d) * sum_{i != j} Cov(z)_{i,j}^2
+        Both terms are >= 0 and MINIMISED (-> 0) when the batch features reach per-dimension
+        std >= gamma (anti-collapse) AND are decorrelated. This is the SAME "more dispersed
+        -> lower loss" sign convention as `_dispersive_loss_infonce`, so it is added to the
+        total with the SAME +lambda weight. There is no invariance term (no positive pair in
+        this setting). Computed in float32 because the off-diagonal covariance-square sum over
+        ~d^2 terms overflows fp16 under autocast.
+        """
+        B = features.shape[0]
+        if B < 2:
+            return features.sum() * 0.0
+        x = features.float()
+        d = x.shape[1]
+        std = torch.sqrt(x.var(dim=0) + eps)                    # (d,) per-dim std
+        var_term = F.relu(gamma - std).mean()
+        xc = x - x.mean(dim=0, keepdim=True)
+        cov = (xc.T @ xc) / (B - 1)                             # (d, d) covariance
+        off_diag = cov - torch.diag(torch.diagonal(cov))
+        cov_term = off_diag.pow(2).sum() / d
+        return var_term + cov_term
+
     # ------------------------------------------------------------------
     # Training
     # ------------------------------------------------------------------
@@ -242,6 +296,7 @@ class FlowMatchingPolicyV5(nn.Module):
         lambda_dispersive: float = 0.0,
         dispersive_target: str = 'vis_pooled',
         dispersive_tau: float = 0.5,
+        dispersive_form: str = 'infonce',
     ):
         """
         Args:
@@ -276,10 +331,21 @@ class FlowMatchingPolicyV5(nn.Module):
 
         if lambda_dispersive > 0.0:
             if dispersive_target == 'flow_mid':
-                # Faithful to Dispersive Loss [13] / D2PPO [14]: InfoNCE-L2 on the
+                # Faithful to Dispersive Loss [13] / D2PPO [14]: a repulsion on the
                 # generative network's intermediate (mid-block) representation.
-                l_disp = self._dispersive_loss_infonce(
-                    mid_feat.flatten(1), dispersive_tau) * lambda_dispersive
+                #   'infonce' = faithful InfoNCE-L2 (/d) — DEFAULT, byte-identical to P2f
+                #   'cosine'  = Phase 6 scale-invariant unit-sphere InfoNCE (no /d)
+                #   'vicreg'  = Phase 6 scale-invariant variance+covariance regulariser
+                mid_flat = mid_feat.flatten(1)
+                if dispersive_form == 'infonce':
+                    l_disp_raw = self._dispersive_loss_infonce(mid_flat, dispersive_tau)
+                elif dispersive_form == 'cosine':
+                    l_disp_raw = self._dispersive_loss_cosine(mid_flat, dispersive_tau)
+                elif dispersive_form == 'vicreg':
+                    l_disp_raw = self._dispersive_loss_vicreg(mid_flat)
+                else:
+                    raise ValueError(f"unknown dispersive_form: {dispersive_form}")
+                l_disp = l_disp_raw * lambda_dispersive
             else:
                 # Legacy off-path placement (hand-rolled log-distance on vis_pooled).
                 l_disp = self._dispersive_loss(vis_pooled) * lambda_dispersive

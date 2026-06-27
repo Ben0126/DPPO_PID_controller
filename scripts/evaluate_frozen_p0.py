@@ -114,8 +114,16 @@ def _aggregate_frozen(per_ep, n_episodes, base_seed, survive_threshold, arch_tag
 
 def evaluate_frozen(ckpt_path, n_episodes, base_seed, survive_threshold,
                     quadrotor_config, flow_config, n_inference_steps,
-                    sigma, device_str='cuda', cue_scale=3.0, cue_noise=0.0):
-    """Evaluate one checkpoint under the frozen protocol; returns aggregate + per-ep."""
+                    sigma, device_str='cuda', cue_scale=3.0, cue_noise=0.0,
+                    target_render='crosshair'):
+    """Evaluate one checkpoint under the frozen protocol; returns aggregate + per-ep.
+
+    target_render selects the FPV target marker renderer ('crosshair' = production
+    default; 'perspective' = non-saturating disk). It MUST match the renderer baked
+    into the policy's training data, otherwise the closed-loop observation
+    distribution is mismatched. physical_size stays at the QuadrotorVisualEnv
+    default (0.5 m) to match collection / training.
+    """
     device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
     with open(flow_config, 'r', encoding='utf-8') as f:
         cfg = yaml.safe_load(f)
@@ -124,7 +132,8 @@ def evaluate_frozen(ckpt_path, n_episodes, base_seed, survive_threshold,
 
     policy, arch = build_policy(ckpt_path, cfg, n_inference_steps, device)
     base_env = QuadrotorEnvV4(config_path=quadrotor_config)
-    visual_env = QuadrotorVisualEnv(base_env, image_size=vis_cfg['image_size'])
+    visual_env = QuadrotorVisualEnv(base_env, image_size=vis_cfg['image_size'],
+                                    target_render=target_render)
     T_obs = vis_cfg['T_obs']
     T_action = act_cfg['T_action']
     max_steps = base_env.max_episode_steps
@@ -261,6 +270,11 @@ def main():
     parser.add_argument('--cue-noise', type=float, default=0.0,
                         help='Phase 3b range-cue: sensor noise std (metres) added to the cue at eval '
                              '(match the noised training arm)')
+    parser.add_argument('--target-render', choices=['crosshair', 'perspective'],
+                        default='crosshair',
+                        help='FPV target marker renderer for the eval env. MUST match the renderer '
+                             'baked into the policy training data (P2TO: O0=crosshair, O1=perspective). '
+                             'physical_size stays 0.5 m as in training.')
     parser.add_argument('--output', default='evaluation_results/frozen_p0_leaderboard.json')
     args = parser.parse_args()
 
@@ -287,7 +301,8 @@ def main():
             agg = evaluate_frozen(path, args.n_episodes, args.base_seed,
                                   args.survive_threshold, args.quadrotor_config,
                                   args.flow_config, args.n_inference_steps, args.sigma,
-                                  cue_scale=args.cue_scale, cue_noise=args.cue_noise)
+                                  cue_scale=args.cue_scale, cue_noise=args.cue_noise,
+                                  target_render=args.target_render)
             agg['label'] = label
             agg['path'] = path
             results[label] = agg
