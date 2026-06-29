@@ -1,14 +1,17 @@
 # Representation Collapse Is Not the Bottleneck — and Neither Is Coverage or Sensing: A Negative Result and Capacity Diagnosis for Vision-Based Quadrotor Hover
 
-**Draft v0.5 — 2026-06-27.** Target: ICRA / robot-learning
+**Draft v0.6 — 2026-06-29.** Target: ICRA / robot-learning
 workshop (venue TBD). **Simulation-only; no real-robot claim.** Every number is reproducible
-from the cited script/artifact. *Draft note (to be removed at submission):* v0.5 adds the
-decisive Teacher × Observation 2×2 (§6.4) and folds in the scale-invariant-regulariser
-ablation (§6.1); the diagnosis upgrades from "coverage/teacher-limited" to a triple
-exclusion (representation, coverage, sensing) leaving a robustness–precision capacity
-conflict, with the Abstract, §6.3, §7, §8 and §9 re-synced accordingly. The core Dispersive
-ablation (§5, official-code-faithful P2f: InfoNCE-L2 on the `flow_net` mid-block, λ=0.5,
-τ=0.5, `/d`) is unchanged.
+from the cited script/artifact. *Draft note (to be removed at submission):* v0.6 adds the
+**capacity scaling ladder (§6.5)** that directly tests the leading explanation left by v0.5:
+scaling `flow_net` 3.3× (13.5 M → 44 M trainable, 3 seeds, frozen protocol) does **not** break
+the precision floor (best 2.63 m), so the robustness–precision conflict is more fundamental
+than parameter count; the Abstract, §1, §6.4, §7, §8 and §9 are re-synced (capacity changes
+from "leading untested explanation" to "tested, floor held"), and the ≈ 3 M parameter figure
+is corrected to the actual 13.5 M trainable. v0.5 added the decisive Teacher × Observation
+2×2 (§6.4) and the scale-invariant-regulariser ablation (§6.1). The core Dispersive ablation
+(§5, official-code-faithful P2f: InfoNCE-L2 on the `flow_net` mid-block, λ=0.5, τ=0.5, `/d`)
+is unchanged.
 
 ---
 
@@ -57,10 +60,14 @@ perspective renderer that restores far-range image→distance R² 0.05→0.40 �
 **negatively interact** on precision: coverage buys survival (+8–14 pp) but, stacked on the
 better-sensing cell, *worsens* precision (2.48→2.93 m). We conclude that for this class of
 task the binding constraint is none of representation collapse, sensing, or coverage, but a
-**robustness–precision conflict** — directly observed as this negative interaction — that we
-attribute to limited model capacity, the leading explanation we identify and the next lever
-to test directly. We release the protocol, both 2×2 ablations, the intervention, and all
-diagnostics.
+**robustness–precision conflict** — directly observed as this negative interaction. We then
+test its leading explanation, model capacity, with a third pre-registered ablation — a
+`flow_net` **scaling ladder** (13.5 M → 44 M trainable, 3 seeds): scaling the action backbone
+**3.3×** does **not** break the floor (best 2.63 m, ~39× oracle; the gain small and saturating,
+with at most a within-noise survival cost), so the conflict is **more fundamental than
+parameter count** — leaving two distinct untested candidates we do not conflate: capacity
+*allocation* (a dedicated precision pathway) and a closed-loop / partial-observability limit. We release the protocol, all three ablations, the intervention,
+and all diagnostics.
 
 ---
 
@@ -98,12 +105,16 @@ three contributions:
    does **not** restore precision (excluding sensing); a decisive, pre-registered
    **Teacher × Observation 2×2** then supplies a *competent* far-range teacher **and** a
    range-encoding observation jointly, and the precision floor still does not move
-   (excluding coverage). What remains is a **robustness–precision capacity conflict**.
+   (excluding coverage). What remains is a **robustness–precision conflict**, whose leading
+   explanation — model capacity — we then test directly with a `flow_net` **scaling ladder**
+   (13.5 M → 44 M trainable, 3 seeds): scaling the action backbone 3.3× does **not** break the
+   floor, so the conflict is more fundamental than parameter count.
 
 This is a negative result, but a constructive one: by excluding representation, sensing,
-and coverage in turn it redirects effort toward model capacity and the
-robustness–precision trade-off — not the auxiliary regularisers, richer sensors, or
-data-coverage fixes a reader would reach for first. Because the regulariser is
+and coverage in turn — and showing that a 3.3× larger action backbone does not break the
+floor either — it redirects effort toward capacity *allocation* (a dedicated precision
+pathway) and the closed-loop limit, not the auxiliary regularisers, richer sensors, larger
+backbones, or data-coverage fixes a reader would reach for first. Because the regulariser is
 implemented exactly as released — placement, weight, and per-dimension normalisation
 (§3) — the null result cannot be attributed to an implementation error.
 
@@ -762,9 +773,10 @@ one can have wide-range survival **or** tight hover precision, and pushing cover
 the latter for the former. Two claim strengths should be kept distinct: the
 robustness–precision *conflict* is **directly observed** (the negative interaction is
 measured — survival-buying coverage costs precision, +0.45 m > the 0.23 m pooled std),
-whereas *capacity* is the **leading explanation** we advance for it, **not** a directly
-manipulated result — we did not vary model capacity here, and a precision-specialised head
-or larger backbone is the direct test (§8). The tension is the task-level signature of a
+whereas *capacity* is the explanation we advance for it and then **test directly in §6.5**:
+scaling the action backbone 3.3× moves precision by at most ~0.3 m before saturating and does
+**not** break the floor, so capacity is at most a minor lever and the binding constraint is
+more fundamental than parameter count. The tension is the task-level signature of a
 phenomenon well documented in multi-task learning: competing objectives optimised under a
 fixed parameter budget trade off rather than co-improve — the multi-objective / Pareto view
 of Sener & Koltun [31], who note that a weighted sum of losses only works when tasks do not
@@ -776,6 +788,66 @@ survival is the one that worsens precision. Together with §6.1 (representation)
 candidate constraints — separately and, for coverage × sensing, jointly — leaves the
 precision floor intact. The binding constraint is therefore **none of representation
 collapse, sensing, or coverage**, but a capacity / robustness–precision conflict.
+
+### 6.5 Capacity is not the bottleneck: a `flow_net` scaling ladder
+
+§6.4 leaves *capacity* as the one leading explanation we had not manipulated. We test it
+directly. The deployed policy carries **13.5 M** trainable parameters, 89 % of them in the
+`flow_net` action backbone. Holding the T1O1 recipe fixed — the cell where the conflict bites
+— and varying **only** that backbone's width and depth (`flow_net` `down_dims`), we train a
+three-rung ladder, 3 seeds each, scored under the identical frozen protocol on the perspective
+render.
+
+**Table 7 — capacity scaling ladder** (`evaluate_p2cap_ablation.py`, 3 seeds, frozen
+protocol, perspective render; `evaluation_results/p2cap_ablation_leaderboard.json`; measured
+oracle 0.068 m). cond-IAE is primary (lower = more precise); survival is the guard.
+
+| Rung | `flow_net` `down_dims` | trainable params | cond-IAE (m) | survival | Tier-1 |
+|------|------------------------|------------------|--------------|----------|--------|
+| S (baseline = T1O1) | (256, 512) | 13.5 M | 2.93 ± 0.18 | 90.6 % | 98.9 % |
+| M (deeper) | (256, 512, 768) | 35.0 M | 2.67 ± 0.26 | 86.7 % | 100 % |
+| XL (wider) | (512, 1024) | 44.0 M | 2.63 ± 0.19 | 86.6 % | 94.4 % |
+
+Scaling the action backbone **3.3×** does not break the floor. cond-IAE improves
+monotonically (2.93 → 2.67 → 2.63 m) and the XL gain is statistically resolvable
+(Δ = −0.30 m > the 0.26 m pooled std), but it is **small and saturating** (M→XL only −0.04 m)
+and stays at **~39× the 0.068 m oracle** (≤ 24.5 % oracle composite) — far from the
+pre-registered ≤ 1.5 m target for a broken floor. Survival drifts down ~4 pp as capacity grows
+(90.6 → 86.6 %), but this drift is ~1 pooled std — within seed noise (the survival guard
+passes) — so we read it as *suggestive* of, not proof of, the precision gain being paid for in
+survival. Either way capacity does not dissolve the robustness–precision frontier; it at most
+nudges the operating point along it, and neither end is deployable.
+
+**Figure 7.** The capacity ladder: cond-IAE (primary; *left*) and survival (*right*) vs
+trainable parameters (S 13.5 M, M 35 M, XL 44 M; 3 seeds, mean ± across-seed std). The green
+dashed line marks the pre-registered ≤ 1.5 m "broken" target; cond-IAE descends monotonically
+but saturates well above it (best 2.63 m at 44 M, ~39× the 0.068 m oracle) while survival
+drifts down — capacity moves the operating point *along* the robustness–precision frontier
+without crossing the deployability line. (`make_paper_figures.py`, reads
+`evaluation_results/p2cap_ablation_leaderboard.json`.)
+
+![Figure 7](figures/capacity_ladder.png)
+
+Two independent open-loop signals corroborate that 13.5 M already suffices to *fit* the data.
+First, all three rungs converge to the same best validation flow loss (≈ 0.0104) — 3.3×
+capacity does not lower the training objective. Second, an open-loop fitting probe (the
+Gate-A measurement that motivated this ladder) shows the 13.5 M generalist already fits both
+the hover and far-range distributions: its hover fit is only ~6 % worse than a hover
+specialist's (a real but tiny interference, 3.2× the seed std yet negligible in absolute
+terms) while its far-range fit is ~24× better. The small open-loop interference does not grow
+into a fitting-capacity wall, so the closed-loop floor is not a representational-capacity one.
+
+Capacity is no longer the leading *untested* explanation: it is tested, and a 3.3× scale-up
+moves precision by at most ~0.3 m before saturating. The binding constraint is therefore *more
+fundamental than parameter count* — an inference from a 3.3× null, not a positive
+identification. Excluding raw parameter count leaves **two distinct candidates, both still
+untested and not to be conflated:** **(a) capacity *allocation*** — an architecture that need
+not spend a *single shared* budget on wide-range recovery to stay alive (e.g. a dedicated
+precision pathway); still a capacity/architecture story, but one a ladder varying *total*
+budget cannot reach. **(b) a closed-loop limit** — compounding error / partial observability
+under monocular FPV; not a capacity story at all. The ladder excludes the simplest reading,
+more parameters, and leaves (a) versus (b) as the next experiment; we advance neither as a
+result.
 
 ---
 
@@ -819,21 +891,27 @@ learning [31, 32].
 teacher saturating inside the operating regime — does **not** survive §6.4. We removed that
 specific limitation: a PID-CTBR teacher competent across the full 1–4 m band (100 %
 recovery, cond-IAE 0.14–0.18 m) labelled the 1–3 m drift band densely, and precision still
-did not move. What remains specific is the *capacity*: the conflict is a statement about
-this policy family and parameter budget (≈ 3 M trainable). A higher-capacity or
-precision-specialised architecture is the untested lever; it is out of scope for the
-pre-registered coverage × sensing question and is the natural next hypothesis.
+did not move. And capacity itself is *not* the specific limitation either: §6.5 scales the
+action backbone 3.3× (13.5 M → 44 M trainable) under the identical protocol and the floor
+holds (best 2.63 m, ~39× oracle), the only gain a small, saturating one with at most a
+within-noise survival cost. What remains specific is the policy family, not the parameter
+count. Excluding raw capacity leaves two distinct untested candidates we do not conflate:
+capacity *allocation* — a dedicated precision pathway that need not spend a single shared
+budget on wide-range recovery (still an architecture story the ladder cannot reach) — and a
+*closed-loop* / partial-observability limit, which is not a capacity story at all.
 
 **Constructive implication.** Improving metric precision here is neither a representation,
 a sensing, **nor** a coverage problem — the three fixes a reader would reach for first are
 each excluded (§6.1, §6.3, §6.4). The intervention shows even the *oracle* range barely
 moves precision and a richer cue collapses survival (§6.3); the decisive 2×2 shows that
 even adding a competent far-range teacher's coverage on top does not move it either, and
-trades precision for survival (§6.4). The remaining lever is therefore **model capacity and
-the robustness–precision trade-off** — e.g. a dedicated precision head or a larger action
-backbone that does not have to spend representational budget on wide-range recovery to stay
-alive. Higher resolution, stereo/depth, representation regularisation, and wider BC
-coverage are all predicted not to move the ~2.8 m floor on this architecture.
+trades precision for survival (§6.4); and *raw* capacity does not move it either — a 3.3×
+larger action backbone leaves the floor at 2.63 m (§6.5). The remaining lever is therefore
+not more parameters but **capacity allocation and the closed-loop limit** — e.g. a dedicated
+precision pathway that need not spend a shared budget on wide-range recovery to stay alive,
+or a fix to the compounding error itself. Higher resolution, stereo/depth, representation
+regularisation, a 3.3× larger backbone (§6.5), and wider BC coverage are all observed or
+predicted not to move the ~2.8 m floor on this architecture.
 
 ---
 
@@ -847,16 +925,20 @@ coverage are all predicted not to move the ~2.8 m floor on this architecture.
   content (it hands the policy the oracle range directly), and the §6.4 teacher emits a CTBR
   command forward-compatible with a PX4 offboard interface, but validation under SITL/Gazebo
   rendering and on hardware (Jetson + PX4 MAVLink) remains future work.
-- **The verdict is a capacity statement, not a teacher-competence one.** One might expect
-  the floor to be conditional on a teacher that saturates beyond 2 m; §6.4 removes that
-  possibility by supplying a teacher competent across the full 1–4 m band (100 % recovery,
-  cond-IAE 0.14–0.18 m) — precision still does not move. The verdict is instead conditional
-  on the **policy capacity**: the robustness–precision conflict is established for this
-  policy family (flow matching with IMU-vision cross-attention, ≈ 3 M trainable), but
-  *capacity itself was not varied* — that is the leading explanation, not a manipulated
-  factor. Directly testing it with a higher-capacity or precision-specialised head is the
-  recommended next step, and is out of scope for the pre-registered coverage × sensing
-  question.
+- **The verdict is a closed-loop / capacity-allocation statement, not a teacher-competence
+  or raw-capacity one.** One might expect the floor to be conditional on a teacher that
+  saturates beyond 2 m; §6.4 removes that possibility by supplying a teacher competent across
+  the full 1–4 m band (100 % recovery, cond-IAE 0.14–0.18 m) — precision still does not move.
+  One might next expect it to be conditional on parameter count; §6.5 removes that too, by
+  scaling the action backbone 3.3× (13.5 M → 44 M trainable) under the identical protocol —
+  the floor holds (best 2.63 m), with only a small, saturating precision gain and at most a
+  within-noise survival cost. The verdict is instead conditional on the **policy family**: the
+  robustness–precision conflict is established for this architecture (flow matching with
+  IMU-vision cross-attention, 13.5 M trainable) and is not relieved by more parameters. What
+  was *not* varied are two distinct levers — capacity *allocation* (a dedicated precision
+  pathway rather than a single shared backbone) and the closed-loop / partial-observability
+  limit — which are the recommended next steps and out of scope for the pre-registered
+  coverage × sensing question.
 - **Data-volume asymmetry in the T×O 2×2.** T0 cells use hover-only data (500 ep), T1 cells
   hover + far-range recovery (1000 ep) — intrinsic to "add far-range labels". The asymmetry
   *favours* T1, yet precision does not improve under that favourable tilt, so it does not
@@ -906,12 +988,16 @@ observation, supplied jointly, leave the floor at 2.93 m (no better than the nei
 control), and coverage and sensing *negatively interact* — coverage buys survival but costs
 precision. The binding constraint for this task is therefore neither representation
 collapse, nor sensing, nor coverage, but a **robustness–precision conflict** — directly
-observed as that negative interaction — which we attribute to limited model capacity. That
-attribution is the leading explanation, not a manipulated result; the next hypothesis to
-test directly is model capacity — a precision-specialised head or a larger backbone — which
-lies outside the pre-registered coverage × sensing question of this study. We release the
-protocol, both 2×2 ablations, the intervention, and all diagnostics so the result and its
-diagnosis are reproducible.
+observed as that negative interaction. We then tested the leading explanation for that
+conflict, model capacity, by scaling the action backbone 3.3× (13.5 M → 44 M trainable;
+§6.5): the floor held (best 2.63 m, ~39× oracle), the only gain small and saturating, with at
+most a within-noise survival cost. The conflict is therefore **more fundamental than parameter
+count** — leaving two distinct untested candidates we do not conflate: capacity *allocation*
+(a dedicated precision pathway rather than a single shared backbone) and a closed-loop /
+partial-observability limit under monocular FPV.
+We release the protocol, all three ablations (Dispersive × E2E, Teacher × Observation,
+capacity ladder), the intervention, and all diagnostics so the result and its diagnosis are
+reproducible.
 
 ---
 
@@ -932,6 +1018,7 @@ diagnosis are reproducible.
 | §6.3 higher-res gate (Fig 5 left) | `scripts/measure_higher_res_gate.py` | `evaluation_results/p3b_higher_res_gate.json` — `docs/experiment_report_sensing_ablation.md` |
 | §6.3 range-cue intervention, 3 seeds (Fig 5 right) | `scripts/run_p3b_rangecue.py` (→ `train_flow_v5.py --range-cue`, `evaluate_frozen_p0.py --cue-noise`) | `evaluation_results/p3b_rc_{clean,noised}{,_s12}_frozen.json` — `docs/experiment_report_sensing_ablation.md` |
 | §6.4 decisive Teacher × Observation 2×2 (Table 6, Fig 6) | `scripts/collect_data_v7_pidctbr.py`, `scripts/run_p2to_ablation.py` (→ `train_flow_v5.py --hover-h5`), `scripts/evaluate_p2to_ablation.py` (→ `evaluate_frozen_p0.py --target-render`) | `evaluation_results/p2to_ablation_{manifest,leaderboard}.json` — `docs/experiment_report_p2to_decisive.md` |
+| §6.5 capacity scaling ladder (Table 7, Fig 7) | `scripts/run_p2cap_ablation.py` (→ `train_flow_v5.py --down-dims`), `scripts/evaluate_p2cap_ablation.py` (capacity-agnostic `detect_arch`); open-loop Gate A `scripts/measure_capacity_fit.py` | `evaluation_results/p2cap_ablation_{manifest,leaderboard}.json`, `evaluation_results/p2cap_gateA_fit.json` — `docs/experiment_report_p2cap_capacity.md` |
 
 Frozen protocol: 30 episodes, base seed 12345, σ = 2.0 exp-decay composite, paired init,
 conditional-IAE over episodes surviving ≥ 250/500 steps, bootstrap 95% CI, measured PPO

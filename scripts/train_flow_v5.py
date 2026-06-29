@@ -26,7 +26,7 @@ import h5py
 import torch
 import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
@@ -310,10 +310,26 @@ def train(args):
               f"noise(m)={args.cue_noise}  -> task_dim={2 + cue_dim}")
 
     nw = train_cfg['num_workers']
+    # Gate B (RESEARCH_PLAN_v8): --hover-weight up-samples hover windows to test the
+    # data-dilution confound (does favouring hover recover precision while keeping
+    # T1 survival?). A WeightedRandomSampler draws hover samples `hover_weight`x more
+    # often; default 1.0 == uniform shuffle (byte-identical to before).
+    train_sampler = None
+    if args.hover_weight != 1.0:
+        task0 = train_ds._task_arr[:, 0]                       # 1.0 hover, 0.0 recovery
+        sw = np.where(task0 > 0.5, args.hover_weight, 1.0).astype(np.float64)
+        train_sampler = WeightedRandomSampler(
+            weights=torch.from_numpy(sw), num_samples=len(sw), replacement=True)
+        n_hov = int((task0 > 0.5).sum())
+        print(f"[--hover-weight {args.hover_weight}] WeightedRandomSampler: "
+              f"{n_hov:,} hover / {len(sw) - n_hov:,} recovery windows "
+              f"(hover effective fraction "
+              f"{n_hov * args.hover_weight / (n_hov * args.hover_weight + (len(sw) - n_hov)):.2f})")
     train_loader = DataLoader(
         train_ds,
         batch_size=train_cfg['batch_size'],
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=nw,
         pin_memory=(nw > 0),
         persistent_workers=(nw > 0),
@@ -331,11 +347,20 @@ def train(args):
     # ------------------------------------------------------------------
     # Model (with optional H4 weight transfer)
     # ------------------------------------------------------------------
+    # Capacity ladder (RESEARCH_PLAN_v8 Phase 1): --down-dims overrides the config
+    # flow_net widths. Deepening (e.g. 256,512,768) keeps the first two levels
+    # H4-transfer-compatible; widening (e.g. 512,1024) trains flow_net from scratch
+    # (encoders/tilt still transfer; watch val_flow for underfit).
+    down_dims = (tuple(int(x) for x in args.down_dims.split(','))
+                 if args.down_dims else tuple(unet_cfg['down_dims']))
+    if args.down_dims:
+        print(f"[--down-dims] flow_net down_dims overridden: "
+              f"{tuple(unet_cfg['down_dims'])} -> {down_dims}")
     model = FlowMatchingPolicyV5(
         vision_feature_dim     = vis_cfg['feature_dim'],
         imu_feature_dim        = imu_cfg['feature_dim'],
         time_embed_dim         = unet_cfg['time_embed_dim'],
-        down_dims              = tuple(unet_cfg['down_dims']),
+        down_dims              = down_dims,
         T_obs                  = T_obs,
         T_pred                 = T_pred,
         action_dim             = act_cfg['action_dim'],
@@ -587,6 +612,14 @@ if __name__ == '__main__':
                              "P2f); 'cosine' = scale-invariant unit-sphere InfoNCE (no /d); "
                              "'vicreg' = scale-invariant variance+covariance regulariser. Only "
                              "affects the --dispersive-target flow_mid path.")
+    parser.add_argument('--down-dims', type=str, default=None,
+                        help='Comma-separated flow_net down_dims override (RESEARCH_PLAN_v8 '
+                             'capacity ladder), e.g. "256,512,768" (deepen, H4-transfer-friendly) '
+                             'or "512,1024" (widen). Default None = config unet.down_dims.')
+    parser.add_argument('--hover-weight', type=float, default=1.0,
+                        help='Gate B (RESEARCH_PLAN_v8): up-sample hover windows by this factor '
+                             'via a WeightedRandomSampler to test the data-dilution confound. '
+                             'Default 1.0 = uniform (unchanged).')
     parser.add_argument('--seed', type=int, default=None,
                         help='Seed python/numpy/torch for reproducible P2 ablation runs')
     parser.add_argument('--tag', type=str, default=None,

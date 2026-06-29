@@ -501,6 +501,71 @@ def fig6_teacher_obs_2x2():
     print(f'wrote {out}')
 
 
+def fig7_capacity_ladder():
+    """The capacity scaling ladder (Sec 6.5). Left: cond-IAE (primary) vs trainable params
+    — monotone but SATURATING, staying ~39× the 0.068 m oracle, far above the 1.5 m
+    broken-floor target. Right: survival vs params — drifts ~4 pp (≈1 pooled std, within seed
+    noise). Reads p2cap_ablation_leaderboard.json (FLOOR NOT BROKEN BY CAPACITY)."""
+    lb = load('p2cap_ablation_leaderboard.json')
+    ra = lb['rung_agg']; v = lb['verdict']
+    ORACLE_IAE = 0.068
+    rungs = ['S', 'M', 'XL']
+    params = [13.5, 35.0, 44.0]                       # M trainable (flow_net scaled)
+    labels = ['S\n13.5M', 'M\n35M', 'XL\n44M']
+    iae_m = [ra[r]['cond_iae_mean'] for r in rungs]
+    iae_s = [ra[r]['cond_iae_std'] for r in rungs]
+    sur_m = [ra[r]['survival_mean'] * 100 for r in rungs]
+    sur_s = [ra[r]['survival_std'] * 100 for r in rungs]
+
+    fig, (axL, axR) = plt.subplots(1, 2, figsize=(11.0, 4.6))
+
+    # ----- Left: cond-IAE (PRIMARY) vs capacity -----
+    axL.errorbar(params, iae_m, yerr=iae_s, marker='o', ms=9, lw=2.0, capsize=5,
+                 color='#7f0000', mfc='#c0392b', mec='k', zorder=5)
+    for p, m in zip(params, iae_m):
+        axL.annotate(f'{m:.2f} m', (p, m), textcoords='offset points', xytext=(9, 9),
+                     fontsize=9.5, fontweight='bold', color='#7f0000')
+    axL.axhline(1.5, color='#27ae60', ls='--', lw=1.6,
+                label='≤1.5 m "broken" target (pre-registered)')
+    axL.set_ylim(1.3, 3.25)
+    axL.set_xticks(params); axL.set_xticklabels(labels)
+    axL.set_xlabel('trainable parameters (flow_net scaled)')
+    axL.set_ylabel('cond-IAE (m, PRIMARY; lower = better)')
+    axL.set_title('Precision vs capacity — monotone but SATURATING\n'
+                  f'best {iae_m[-1]:.2f} m at 44 M ≈ {iae_m[-1]/ORACLE_IAE:.0f}× oracle '
+                  '(target not reached)', fontsize=10)
+    axL.legend(loc='upper right', fontsize=8.4, framealpha=0.9)
+    axL.grid(alpha=0.25)
+    dXL = v['scaled']['XL']['cond_iae_delta_vs_S']
+    axL.annotate(f'XL−S = {dXL:+.2f} m\n(saturating: M→XL only −0.04 m)',
+                 xy=(35, 2.50), fontsize=8.3, color='#555', ha='center')
+
+    # ----- Right: survival vs capacity (dips) -----
+    axR.errorbar(params, sur_m, yerr=sur_s, marker='s', ms=9, lw=2.0, capsize=5,
+                 color='#16557a', mfc='#3498db', mec='k', zorder=5)
+    for p, m in zip(params, sur_m):
+        axR.annotate(f'{m:.0f}%', (p, m), textcoords='offset points', xytext=(9, -15),
+                     fontsize=9.5, fontweight='bold', color='#16557a')
+    axR.set_xticks(params); axR.set_xticklabels(labels)
+    axR.set_ylim(70, 100)
+    axR.set_xlabel('trainable parameters (flow_net scaled)')
+    axR.set_ylabel('survival %')
+    axR.set_title('Robustness — survival drift within seed noise\n'
+                  '(~−4 pp ≈ 1 pooled std; not a clear purchased tradeoff)', fontsize=10)
+    axR.grid(alpha=0.25)
+
+    broken = v['FLOOR_BROKEN_BY_CAPACITY']
+    verdict = 'FLOOR NOT BROKEN BY CAPACITY' if not broken else 'FLOOR BROKEN BY CAPACITY'
+    fig.suptitle(f'Capacity scaling ladder (3 seeds, frozen P0): {verdict} — scaling '
+                 f'flow_net 3.3× (13.5M→44M) leaves cond-IAE ≈{iae_m[-1]:.1f} m '
+                 f'(~{iae_m[-1]/ORACLE_IAE:.0f}× oracle); capacity moves along the '
+                 'robustness–precision frontier, not across it', fontsize=9.8, y=1.02)
+    fig.tight_layout()
+    out = os.path.join(FIGDIR, 'capacity_ladder.png')
+    fig.savefig(out, dpi=200, bbox_inches='tight'); plt.close(fig)
+    print(f'wrote {out}')
+
+
 def main():
     os.makedirs(FIGDIR, exist_ok=True)
     fig1_single_seed_swing()
@@ -509,6 +574,7 @@ def main():
     fig4_crosshair_saturation()
     fig5_sensing_ablation()
     fig6_teacher_obs_2x2()
+    fig7_capacity_ladder()
     print(f'\nFigures in {FIGDIR}')
 
 

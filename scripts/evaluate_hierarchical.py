@@ -44,11 +44,21 @@ def detect_arch(ckpt_path: str) -> dict:
     is_v5 = ('cross_attn.q_proj.weight' in state
              and 'state_predictor.net.0.weight' in state)
     task_dim = 0
+    down_dims = None
     if is_v5:
         era = 'V5'; activation = 'ReLU'
         # Check flow_net.encoder_blocks.0.film.net.1.weight to find cond_dim
         cond_dim = state['flow_net.encoder_blocks.0.film.net.1.weight'].shape[1]
         task_dim = cond_dim - (256 + feature_dim + 128)
+        # Infer flow_net down_dims from the encoder-block conv out-channels so the
+        # RESEARCH_PLAN_v8 capacity-ladder checkpoints (e.g. (256,512,768)/(512,1024))
+        # rebuild at their TRAINED width instead of the config default (256,512).
+        dd, i = [], 0
+        while f'flow_net.encoder_blocks.{i}.conv1.weight' in state:
+            dd.append(int(state[f'flow_net.encoder_blocks.{i}.conv1.weight'].shape[0]))
+            i += 1
+        if dd:
+            down_dims = tuple(dd)
     elif hidden_dim == 64:
         era = 'Original'; activation = 'Mish'
     elif hidden_dim == 256:
@@ -57,7 +67,7 @@ def detect_arch(ckpt_path: str) -> dict:
         era = 'H4'; activation = 'ReLU'
     return {'imu_hidden': hidden_dim, 'imu_feature_dim': feature_dim,
             'has_tilt': has_tilt, 'era': era, 'activation': activation,
-            'is_v5': is_v5, 'task_dim': task_dim}
+            'is_v5': is_v5, 'task_dim': task_dim, 'down_dims': down_dims}
 
 
 def rebuild_policy_for_arch(policy, arch, device):
@@ -174,11 +184,14 @@ def build_policy(ckpt_path: str, cfg: dict, n_inference_steps: int, device) -> t
 
     if arch['is_v5']:
         # v5 has its own class with cross-attention + state predictor head.
+        # Use the checkpoint-detected down_dims (capacity ladder) when available,
+        # else the config default.
+        v5_down_dims = tuple(arch['down_dims']) if arch.get('down_dims') else tuple(cfg['unet']['down_dims'])
         policy = FlowMatchingPolicyV5(
             vision_feature_dim=vis_cfg['feature_dim'],
             imu_feature_dim=imu_feature_dim,
             time_embed_dim=cfg['unet']['time_embed_dim'],
-            down_dims=tuple(cfg['unet']['down_dims']),
+            down_dims=v5_down_dims,
             T_obs=vis_cfg['T_obs'],
             T_pred=act_cfg['T_pred'],
             action_dim=act_cfg['action_dim'],
