@@ -1,566 +1,336 @@
-# Vision-DPPO: End-to-End Drone Control via Diffusion Policy
-# 基於視覺與擴散策略的無人機端到端直接控制
+# Vision-DPPO: Flow-Matching Visuomotor Policies for Quadrotor Hover (Simulation Study, Negative Result)
+### 以 flow-matching 視覺策略做四旋翼懸停的模擬研究（負面結果與診斷）
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg)](https://pytorch.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+> **About the name:** the repo name is historical. The project started as a diffusion policy with PPO fine-tuning (DPPO). The results reported here come from behaviour-cloned flow-matching policies.
 
+**At a glance**
+- **What I built:** a 6-DOF quadrotor simulator with a 64×64 FPV renderer, a state-based PPO expert, and a 13.5 M-parameter flow-matching vision + IMU policy, all in PyTorch.
+- **What I found:** my original metric made policies that crashed early look precise. I replaced it with a frozen, multi-seed evaluation protocol.
+- **Result:** an anti-collapse regulariser (Dispersive Loss) gave no gain. Under every intervention I tried, hover error stayed at about 2.4–3.0 m. The state-based oracle reaches 0.068 m.
 
----
+This is a **simulation-only** study. The policy sees a 64×64 first-person camera, an IMU and a 2-value hover/recovery mode tag, and has to hover a quadrotor. At evaluation the mode tag is computed from the true state (position error, tilt, body rate), so it is one bit of privileged information. The study asks two things:
+1. Can a flow-matching visuomotor policy do this hover task?
+2. Does **Dispersive Loss**, a contrastive regulariser meant to prevent feature collapse, improve the policy's closed-loop control?
 
-## Research Motivation / 研究動機
-
-Traditional drone control relies on a modular stack: Camera → VIO → Planning → Cascaded PID. This design has three fundamental limitations:
-
-1. **Error accumulation:** VIO estimation errors propagate to the controller; positioning and control problems are inseparable
-2. **Misaligned objectives:** VIO optimizes "estimation accuracy," PID optimizes "control error" — they are not jointly aligned
-3. **Multimodal action collapse:** Traditional controllers and standard PPO can only express unimodal action distributions, unable to handle scenarios where multiple valid flight strategies coexist
-
-**Core research question:** Can a Diffusion Policy map FPV image sequences directly to 4D motor thrust commands, resolving the above limitations while achieving real-time control (>60Hz) on resource-constrained onboard computers?
+**The result is negative.** The data did not support Dispersive Loss. Hover precision stayed far from the oracle under every fix that was tested.
 
 ---
 
-## Method Overview / 方法概覽
+## Status
 
-```
-Traditional:
-  Camera → VIO → Position PID → Attitude PID → Rate PID → Motor Mixing → Motors
-  (each module trained independently, errors accumulate at each stage)
-
-Vision-DPPO (This Project):
-  FPV Image Stack → ViT Encoder → D²PPO (1D U-Net) → [OneDP Distillation] → Motor Thrusts
-  (end-to-end joint optimization, single-step inference at 62Hz+)
-```
-
-**Why Diffusion Policy instead of PPO?**
-PPO's Gaussian output assumes a unimodal action distribution. In complex flight scenarios (e.g., left or right around an obstacle), the optimal strategy is multimodal — Gaussian PPO outputs the average of two modes (i.e., crashes into the obstacle). Diffusion Policy learns the complete action distribution via iterative denoising, natively supporting multimodality.
+| | |
+|---|---|
+| Project | Finished. Feb–Jun 2026. Independent, self-directed project with no advisor. I studied the concepts and algorithms in February and wrote the code from March to June. |
+| Write-up | A draft (`docs/paper_negative_result_draft.*`). **It has not been submitted, and I do not plan to submit it.** The venue lines inside the draft are left over from an earlier plan. |
+| Hardware | **No real-robot claim.** Every result comes from the simulator in `envs/`. |
+| Result files | `evaluation_results/`, `checkpoints/` and `data/*.h5` are gitignored, so they are **not in this repository**. The numbers below are copied from the write-up and from the experiment reports in `docs/`. |
 
 ---
 
-## System Architecture / 系統架構
+## TL;DR
 
-### Baseline (Phase 3a/3b)
+**Question.** A flow-matching policy sees a 2-frame 64×64 FPV stack, an IMU and a hover/recovery mode tag. Can it hover a quadrotor in closed loop at 50 Hz? And does Dispersive Loss improve that control?
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  FPV Image Stack (T_obs=2 frames, 64×64 RGB each)       │
-│  → stacked as (B, 6, 64, 64)                            │
-│  DR: ±sky/ground color, ±brightness, ±focal, σ=5 noise  │
-└────────────────────┬────────────────────────────────────┘
-                     ↓
-┌─────────────────────────────────────────────────────────┐
-│  Vision Encoder (4-layer CNN)                           │
-│  → 256D feature vector                                  │
-└────────────────────┬────────────────────────────────────┘
-                     │ (B, 256) + timestep(128) = cond(384)
-                     ↓
-┌─────────────────────────────────────────────────────────┐
-│  D²PPO: Conditional 1D U-Net                            │
-│  + Dispersive Loss (prevents representation collapse)    │
-│  → Predicted noise ε_θ (B, 4, 8)                       │
-└────────────────────┬────────────────────────────────────┘
-                     ↓
-┌─────────────────────────────────────────────────────────┐
-│  Inference: 10-step DDIM → 12.5Hz                       │
-│  [Target v3.1+] OneDP 1-step → 62Hz+                   │
-└────────────────────┬────────────────────────────────────┘
-                     │ (B, T_pred, 4) → execute first T_action steps
-                     ↓
-┌─────────────────────────────────────────────────────────┐
-│  6-DOF Quadrotor (RK4 @ 200Hz, NED frame)               │
-└─────────────────────────────────────────────────────────┘
-```
+**What was built.** Everything below runs in simulation:
+- a 6-DOF quadrotor simulator: RK4 integration, a 200 Hz INDI rate loop and a 50 Hz policy loop.
+- a state-based PPO expert. It serves as the oracle. It also produced the demonstrations for the initial BC policy and for the Dispersive study.
+- a cascade PID-CTBR teacher. It produced both the hover and the far-range demonstrations for the Teacher × Observation study and the capacity study.
+- a vision + IMU flow-matching policy, trained by behaviour cloning.
+- three controlled ablations, each cell trained with 3 seeds.
 
-### Architecture v4.0 H4 (Current — IMU-Dominant Fusion, 2026-05-15+)
+**Metrics used below** (defined in full under *Evaluation protocol*):
+- **Tier-1:** the % of episodes that fly at least half of the 500-step horizon.
+- **Survival:** the mean fraction of the horizon flown.
+- **cond-IAE:** the mean position error in metres. It is measured over the second half of each episode, and only over episodes that reached Tier-1.
+- **pp:** percentage points.
 
-```
-┌──────────────────────────────┐  ┌──────────────────────────────┐
-│  FPV Image Stack (B,6,64,64) │  │  6D IMU [ωx,ωy,ωz, ax,ay,az] │
-│  DR: color/brightness/focal  │  │  (body frame, normalized)    │
-└──────────────┬───────────────┘  └──────────────┬───────────────┘
-               ↓                                 ↓
-┌──────────────────────────┐     ┌───────────────────────────────┐
-│  Vision Encoder (CNN)    │     │  IMU Encoder MLP              │
-│  → 256D vision_feat      │     │  Linear(6→1024→512)           │
-│  (456k params)           │     │  → 512D imu_feat              │
-└──────────────┬───────────┘     │  (532k params — DOMINANT)     │
-               │                 └──────────────┬────────────────┘
-               │    cat([256D, 512D])            │
-               └─────────────────┬──────────────┘
-                                 ↓ 768D global_cond (IMU 67%)
-                   + timestep_embed(128D)
-                                 ↓ 896D cond
-               ┌─────────────────────────────────────────┐
-               │  Flow Matching: Conditional 1D U-Net    │
-               │  + tilt_head (training-only aux loss)   │
-               │  → Velocity field v_θ (B, 4, T_pred)    │
-               └─────────────────┬───────────────────────┘
-                                 ↓ N-step Euler inference
-               ┌─────────────────────────────────────────┐
-               │  Recommended: n_inference_steps=2       │
-               │  (1-step Euler is suboptimal post-RL)   │
-               └─────────────────────────────────────────┘
+**The data did not support Dispersive Loss.** I implemented it to match the official reference code: InfoNCE-L2 on the `flow_net` mid-block, λ=0.5, τ=0.5, with the `/d` normalisation.
+- With a trainable encoder, adding it changed Tier-1 by −2.2 pp. That is inside the across-seed noise of 6.3 pp. Survival changed by −2.1 pp.
+- With a frozen encoder, adding it lowered Tier-1 from 87.8 to 74.4.
 
-V/I gradient ratio: 46.8× (Original) → 9.9× (H3a) → 3.22× (H4)
-BC alone: 130 steps (H3a) → 202 steps (H4), +55%
-```
+**There is a precision floor.**
+- Under the sensing, far-range-coverage and capacity interventions, cond-IAE stayed at about **2.4–3.0 m**.
+- Across every configuration in the write-up, it spans roughly **2.4–3.3 m**.
+- The state-based oracle reaches **0.068 m**.
 
-### Architecture v5 (2026-05-18 — Cross-Attention IMU→Vision + State Prediction Aux Loss)
+**I tested several explanations. None brought precision near the oracle.** None got below the 1.5 m target set in the research plan. The factors tested were:
+- feature collapse in the representation;
+- sensing, which included handing the policy the true range;
+- data coverage, using a far-range teacher together with a range-encoding render;
+- model capacity: making the action network 3.3× larger.
 
-```
-┌──────────────────────────────┐  ┌──────────────────────────────┐
-│  FPV Image Stack (B,6,64,64) │  │  6D IMU [ωx,ωy,ωz, ax,ay,az] │
-└──────────────┬───────────────┘  └──────────────┬───────────────┘
-               ↓                                 ↓
-┌──────────────────────────┐     ┌───────────────────────────────┐
-│  VisionEncoderV5 (CNN)   │     │  IMU Encoder MLP              │
-│  → spatial_map(B,256,4,4)│     │  Linear(6→1024→512)           │
-│  → pooled (B,256D)       │     │  → 512D imu_feat              │
-└──┬───────────────────────┘     └──────────────┬────────────────┘
-   │ pooled                                      │ imu_feat
-   │                      ┌──────────────────────┘
-   │           CrossAttentionIMU2Vision:
-   │           Q = Linear(imu_feat, 256)
-   │           K = V = spatial_map → 16 tokens
-   │           → attended (B, 256)
-   │                      │
-   │    cat([attended(256), imu_feat(512)])
-   │                      ↓ 768D global_cond (= H4，flow_net 直接 transfer)
-   │              + timestep_embed(128D)
-   │                      ↓ 896D cond → Conditional 1D U-Net → v_θ
-   │
-   │ [Training only — State Prediction Auxiliary Loss]
-   └→ StatePredictor MLP(256→256→15)
-      → state_pred (B,15)
-      L = L_flow + λ_state × MSE(state_pred, state_15d_normalized)
+The two largest effects:
+- **Capacity:** about 0.3 m better with 3.3× more parameters (XL vs S), only just above seed noise.
+- **Oracle range:** about 0.5 m better when the policy was given the true range. This cost 6.7 pp of survival, and 0.15 m of sensor noise removed the gain.
 
-Key design: global_cond 維度刻意保持 768D → H4 flow_net 權重 1:1 transfer
-            state_predictor 僅接 vis_pooled（非 attended）→ 梯度純粹施壓 vision encoder 學物理
-```
+Three seeds are only enough to say these explanations were *not supported*. They are not enough to rule them out.
 
-**v5 BC 預訓練結果（2026-05-18）：**
-- Checkpoint: `checkpoints/flow_policy_v5/20260518_072501/best_model.pt`
-- Best val/flow_loss = **0.06273** @ epoch 22（與 H4 BC 相當）
-- H4 → v5 transfer: 94 tensors 成功，`cross_attn`/`state_predictor` 隨機初始化
+**What remains is a robustness–precision trade-off, and the data show it directly.** Adding far-range recovery data raises survival. On the perspective cell, it also makes precision worse (2.48 → 2.93 m). I have not tested *why* the trade-off exists. Two candidate causes remain:
+- how model capacity is allocated;
+- a limit of closed-loop control under partial observability.
 
-**v5 Distillation 結果（2026-05-18）：**
-
-| Run | lambda_state | Updates | state_loss | crash_rate | 結果 |
-|-----|-------------|---------|------------|-----------|------|
-| Run 1 | 0.1 | 66/200 (killed) | 0.24–5.46（振盪） | 100% | **FAILED** |
-| Run 2 | 1.0 | 20/200 (killed) | 1.913（上升） | 100% | **FAILED** |
-
-**根因：** (1) BC 只在 hover-only 資料訓練，swift perturbation 的 OOD tilted 影像 vision encoder 從未見過；(2) flow_loss 與 state_loss 透過 vis_pooled 共享 vision encoder，梯度方向相反 → gradient conflict；(3) rot6D std≈0.04 使 25° 傾角 = ±5σ normalized → state_loss 結構性爆炸。
-
-### Architecture v3.1 / v3.2 (Phase 3c — IMU Late Fusion + FCN Auxiliary Depth) [Historical]
-
-```
-┌──────────────────────────────┐  ┌──────────────────────────────┐
-│  FPV Image Stack (B,6,64,64) │  │  6D IMU [ωx,ωy,ωz, ax,ay,az] │
-│  DR: color/brightness/focal  │  │  (body frame, 50Hz aligned)  │
-└──────────────┬───────────────┘  └──────────────┬───────────────┘
-               ↓                                 ↓
-┌──────────────────────────┐     ┌───────────────────────────────┐
-│  Vision Encoder (CNN)    │     │  IMU Encoder MLP              │
-│  → 256D vision_feat      │     │  Linear(6→64→32)              │
-└──────────────┬───────────┘     │  → 32D imu_feat               │
-               │                 └──────────────┬────────────────┘
-               │    cat([256D, 32D])             │
-               └─────────────────┬──────────────┘
-                                 ↓ 288D global_cond
-                   + timestep_embed(128D)
-                                 ↓ 416D cond
-               ┌─────────────────────────────────────────┐
-               │  D²PPO: Conditional 1D U-Net            │
-               │  + Dispersive Loss                      │
-               │  → Predicted noise ε_θ (B, 4, 8)       │
-               └─────────────────┬───────────────────────┘
-                                 ↓
-               ┌─────────────────────────────────────────┐
-               │  OneDP Single-Step Distillation         │
-               │  → 4D motor thrusts @ 62Hz+             │
-               └─────────────────┬───────────────────────┘
-                                 ↓
-               ┌─────────────────────────────────────────┐
-               │  6-DOF Quadrotor (RK4 @ 200Hz)          │
-               └─────────────────────────────────────────┘
-
-[Training only — stripped before deployment]
-256D vision_feat → FCN Depth Decoder (5× ConvTranspose2d) → (1,64,64) depth_pred
-L_total = exp(β×A)×L_diff + λ_disp×L_dispersive + λ_depth×MSE(depth_pred, depth_gt)
-```
+**Main methodology contribution: a frozen evaluation protocol.**
+- **The problem.** The older RMSE metric averaged error only over the steps a policy was still flying (`scripts/evaluate_rhc_v4.py:91–92`). Policies that crashed early therefore looked precise.
+- **The fix.** The frozen protocol (`scripts/evaluate_frozen_p0.py`):
+  - gives every model the same paired initial conditions;
+  - reports precision only over episodes that survived;
+  - adds bootstrap confidence intervals;
+  - reports mean ± std across training seeds;
+  - normalises against a *measured* oracle.
+- **The effect.** Under this protocol, two earlier claims did not hold: "H4 is best" and "RL gives a 51 % precision gain".
 
 ---
 
-## Development Phases / 開發階段
+## Final architecture (v5 flow policy)
 
 ```
-Phase 1: PPO Expert + 6-DOF Environment
-         [✓]  Done — Run 6 (RMSE 0.069m, 0 crashes)
-
-Phase 2: FPV Data Collection
-         [✓]  Done — expert_demos_dr.h5 (1000 ep, 500k steps, DR enabled)
-         [✓]  v3.1 re-collection complete → expert_demos_v31.h5 (4.04GB, IMU+depth)
-         [✓]  v3.2 re-collection complete → expert_demos_v32.h5 (4.0GB, physics IMU)
-              Physics-based specific force replaces finite-difference (2026-04-10)
-
-Phase 3: Vision Diffusion Policy
-   3a    [✓]  Supervised pre-training Re-run 2 complete (DR-aug, 500 epochs)
-              checkpoints/diffusion_policy/20260405_044808/best_model.pt
-   3a-v31[✓]  v3.1 supervised pre-training complete (500 epochs, best loss -1.4415)
-              checkpoints/diffusion_policy/v31_20260406_185128/best_model.pt
-   3a-v32[✓]  v3.2 supervised pre-training complete (500 epochs, best loss -1.437)
-              checkpoints/diffusion_policy/v32_20260410_120042/best_model.pt
-   3a-v33[✓]  v3.3 supervised pre-training complete (500 epochs, best loss -1.4435 @ epoch 488)
-              checkpoints/diffusion_policy/v33_20260412_052333/best_model.pt
-              Fix: physics IMU normalized (specific_force centred at 0); v3.2 DPPO aborted u25
-   3b    [✓]  D²PPO Run 2 (dppo_20260404_044552) — best u11, RMSE 0.168m, 50/50 crashes
-   3b    [✓]  D²PPO Run 3 (dppo_20260405_155057) — best u34, RMSE 0.488m, 50/50 crashes
-   3b    [✓]  D²PPO Run 4 (dppo_20260410_045335) — best u155, RMSE 0.409m, 50/50 crashes
-              DR-aug pretrained; value loss converged (VLoss=17), reward stable, but RMSE worse
-   3c    [✗]  DPPO v3.1 Run 1+2 ABANDONED — RMSE 0.518/0.466m, finite-diff IMU covariate shift
-   3c-v32[✗]  DPPO v3.2 Run 1 ABORTED u25 (no checkpoint) — IMU not normalised; supervised RMSE 1.985m
-   3c-v33[✓]  DPPO v3.3 Run 1 DONE (dppo_v33_20260413_033647) — RMSE 0.1039m, 50/50 crashes
-              warmup=50; VLoss converged 17–80; best result so far (vs 0.168m baseline)
-   3c-v33[✓]  DPPO v3.3 Run 2 DONE (dppo_v33_20260414_023817) — RMSE 0.1335m, 50/50 crashes
-              warmup=100; best reward 0.7077 @ u225; collapsed u275+; RMSE worse than Run 1
-              Root cause confirmed: 74ms inference >> 20ms control period → covariate shift hard ceiling
-   3d    [✓]  OneDP single-step distillation DONE (onedp_v33_20260415_134933)
-              ε-space distillation: loss_distill 0.0069→0.0003 (50 epochs), inference 9.9ms ✓
-              RHC eval: RMSE 0.2713m, 50/50 crashes — latency fixed but quality insufficient
-              Root cause: ε-space distillation (all t uniform) ≠ optimise for t=99 1-step accuracy
-              Next: Phase 3d-v2 (direct DPPO fine-tune of 1-step student, or alternative approach)
-
-Phase 4: Evaluation
-         [ ]  Full benchmark (BC-LSTM, VTD3, Standard DP)
-         [✓]  v3.3 RHC evaluation — Run 1: 0.1039m / Run 2: 0.1335m (both 50/50 crashes)
-
-Phase 5: Hardware Deployment
-         [ ]  Jetson Orin Nano + TensorRT (FCN decoder pruned before export)
-         [ ]  Real flight testing (with wind disturbance)
-
-─────────── v4.0 Architectural Pivot (2026-04-19) ───────────
-
-Validation: BC-MLP 50/50 crash → covariate shift confirmed (latency not root cause)
-
-Phase 0: INDI Hover Gate
-         [✓]  DONE — tilt 0.00°, omega 0.000 rad/s (disturbances disabled)
-
-Phase 1: CTBR PPO Expert (QuadrotorEnvV4 + INDI)
-         [✓]  DONE — RMSE 0.0649m, 0 crashes (ckpt 20260419_142245, best of 2 runs)
-
-Phase 2: FPV Data Collection v4.0 (CTBR demos)
-         [✓]  DONE — expert_demos_v4.h5 (1000 ep, 500k steps, 3.9GB, 0 crashes)
-
-Phase 3: Flow Matching Policy (replaces DDPM)
-         [✓]  3a: Supervised pre-training — DONE (best val=0.0630, ckpt 20260420_034314)
-              BC eval: RMSE=0.5216m, 50/50 crashes (gate FAIL — expected, covariate shift)
-         [✓]  3b: ReinFlow RL fine-tuning — 20 runs complete (2026-04-20 ~ 2026-05-03)
-              Run 1–7: engineering fixes (VLoss gate, BC reg, one-way latch) → RMSE stuck 0.51m
-              Run 8–9: OOD disturbance env attempts → gate never opened / no improvement
-              Run 10: Curriculum (hover → ramp 0.1→2.0m, 600 upd, λ_bc=0.1)
-                      final ckpt: RMSE 0.3005m 50/50, ~36 steps avg ← old "best" (RMSE-biased)
-              Run 12: Anchored Curriculum → best train reward 0.8270; RMSE 0.2975m; crash 50/50
-              Runs 13–20: LR sweep, reward variants → training reward ceiling 0.6948 but eval gap persists
-              Diagnosis: training-eval gap confirmed. Crash at step 60 = same as BC baseline.
-         [✓]  3d: H3a→H4 IMU-dominant fusion (Runs 23–28, 2026-05-14 ~ 2026-05-17)
-              H4 BC: 202 steps avg (SOTA); all RL runs degrade (AWR mode-collapse confirmed)
-              Run 28 positive-advantage mask: interrupted, result pending
-
-─────────── v5.0 Joint End-to-End Training (2026-06-03) ───────────
-
-Root cause of 100% crash: Vision-only student cannot infer physics from hover-distribution images under separate pretraining.
-→ v5.0 unfreezes the visual encoder and trains it端到端 (End-to-End) alongside the flow network on mixed hover and recovery data.
-
-Phase 3e: v5 Architecture — Cross-Attention + State Prediction Aux
-         [✓]  v5 BC pre-training — DONE
-              Checkpoint: checkpoints/flow_policy_v5/20260518_072501/best_model.pt
-              Best val/flow_loss = 0.06273 @ epoch 22 (80 epochs total)
-              H4→v5 transfer: 94 tensors (cross_attn / state_predictor randomly init)
-         [✗]  v5 Distillation Run 1 (lambda_state=0.1) — FAILED (killed @ 66/200)
-              state_loss oscillated 0.24–5.46, crash_rate 100%, flow_loss ok (0.32→0.29)
-              Root cause: lambda_state too small; rot6D std≈0.04 → OOD tilt = ±5σ state error
-         [✗]  v5 Distillation Run 2 (lambda_state=1.0) — FAILED (killed @ 20/200)
-              state_loss still growing (avg 1.913 vs 1.336 at start), crash_rate 100%
-              Root cause confirmed: gradient conflict (flow_loss ↔ state_loss share vis_pooled) + hover-only BC has no OOD image coverage
-         [✓]  v5.0 Joint E2E training (warm-started from H4, encoder unfrozen, 50% hover + 50% recovery demos) — DONE (2026-06-03)
-              Best val/flow_loss = 0.0642 @ epoch 30 (ckpt: checkpoints/flow_policy_v5/20260603_171316/best_model.pt)
-              RHC eval: survival rate 60.1% (+55% relative increase), IAE_steady 2.85m, composite score 0.073
-
-Phase 4: Hardware Deployment
-         [ ]  1-step inference (<16ms target)
-         [ ]  Jetson Orin Nano + TensorRT
+ 64x64 RGB FPV x 2 frames (6 ch) ──► CNN encoder (VisionEncoderV5) ──► spatial map 256x4x4
+                                                                        │ (keys/values)
+ 6-D IMU (gyro + specific force) ──► IMU MLP 6→1024→512 ──► imu_feat 512 ─┤ (query)
+                                                                        ▼
+                                           IMU→vision cross-attention ──► attended 256
+                                                                        │
+          global_cond = [attended 256 ; imu_feat 512 ; task tag 2 (hover / recovery)]
+                                                                        ▼
+               flow-matching 1-D conditional U-Net (flow_net, down_dims = (256, 512))
+               2 Euler steps at eval ──► chunk of 8 CTBR commands; execute the first, re-plan
+                                                                        ▼
+            CTBR = collective thrust + body rates, 50 Hz  (envs/quadrotor_env_v4.py)
+                                                                        ▼
+                  INDI rate controller, 200 Hz ──► per-motor commands ──► 6-DOF rigid body (RK4)
 ```
 
-**Current status (v5.0 — 2026-06-04):**
+**Policy**
+- Code: `models/flow_policy_v5.py` (`FlowMatchingPolicyV5`) and `models/vision_encoder_v5.py`.
+- A training-only auxiliary head predicts the 15-D state from the pooled vision feature.
+- The final evaluated policy has 13.5 M trainable parameters (`docs/experiment_report_p2cap_capacity.md`).
 
-**v5.0 Joint End-to-End Training (2026-06-03):**
-By unfreezing the visual encoder and training on a 50/50 mix of hover and recovery demos, we resolved the encoder-action alignment issue. The survival rate of `Joint_E2E_v5` reached **60.1%** (+55% relative increase over H4 BC), the highest among all vision policies. However, steady-state drift increased (IAE 2.85m vs 1.32m) due to the recovery demos desensitizing the encoder to sub-meter corrections. Future work will introduce dynamic task conditioning to address this trade-off.
+**Dispersive Loss variants** (all in `models/flow_policy_v5.py`)
+- `_dispersive_loss_infonce`: the faithful version.
+- `_dispersive_loss_cosine`
+- `_dispersive_loss_vicreg`
 
-**Major findings (v4.0 & v5.0 — 2026-05-13 ~ 2026-06-03):**
-1. **RMSE was misleading the entire v4.0 effort.** It is biased toward short-lived policies (smaller integration window). Past "best" Run 10 (RMSE 0.30m) only survived 36 steps; new evaluation reveals it ranks WORST.
-2. **H4 IMU-dominant fusion = real v4.0 SOTA.** Enlarged IMU encoder to feature_dim=512 (grad ratio 46.8× → 9.9× → **3.22×**). BC alone gives 202 steps avg (vs H3a BC 130, **+55%**) without any RL.
-3. **Joint E2E training solves alignment.** Unfreezing the encoder during BC on hover+recovery data enables representation learning aligned with action generation, lifting survival to **60.1%**.
-4. **AWR mode-collapse confirmed.** PPO advantage normalization absorbs sparse crash_penalty (constant offset). Weighted MSE forces policy to imitate its own crash trajectories. All RL runs systematically destroyed BC.
+**Simulator**
+- Dynamics: `envs/quadrotor_dynamics.py` (RK4, `dt = 0.005`).
+- CTBR action space and INDI loop: `envs/quadrotor_env_v4.py`.
+- FPV renderer: `envs/quadrotor_visual_env.py`.
+- Loop rates: `configs/quadrotor_v4.yaml` (`dt_inner: 0.005`, `dt_outer: 0.02`).
 
-**New evaluation framework (飛→穩→準 hierarchy):**
-- Tier 1: `survival_rate = ep_length / max_episode_steps`
-- Tier 2 (Stability): `stability_score = exp(-IAE_steady)` where `IAE_steady = mean(|e_t|)` over second half of episode
-- Tier 3 (Accuracy): `accuracy_score = exp(-terminal_err)` where `terminal_err = mean(|e_t|)` over last 10% of episode
-- Composite:
-  - If `survival_rate < 0.5`: `score = 0.5 × survival_rate` (max 0.25)
-  - If `survival_rate ≥ 0.5`: `score = survival_rate × (0.6 × stability_score + 0.4 × accuracy_score)`
-  *(Refactored from linear clipping `max(0, 1 - error/2)` to smooth exponential decay `exp(-error)` to reward longer flights).*
-
-See [docs/dev_log_v4_h4_hierarchical.md](docs/dev_log_v4_h4_hierarchical.md) and [docs/experiment_report_joint_e2e.md](docs/experiment_report_joint_e2e.md) for full diagnostic chains and report.
-
-v4.0 architectural pivot from v3.x:
-
-| Change | Old (v3.x) | New (v4.0) |
-|--------|-----------|-----------|
-| Action space | SRT (4D motor thrusts) | **CTBR** [F_c_norm, ω_x, ω_y, ω_z] |
-| Inner-loop | None (direct thrust) | **INDI** rate controller @ 200Hz |
-| Policy | DDPM (cosine schedule, 64× amplification) | **Flow Matching** (linear interpolant) |
-| RL fine-tuning | D²PPO | **ReinFlow** |
-
-Phase 0–3a complete. **Now: Phase 3b — ReinFlow RL fine-tuning (gate: BC RMSE < 0.15m).**
-Expert: `checkpoints/ppo_expert_v4/20260419_142245/` (RMSE 0.0649m). Data: `data/expert_demos_v4.h5` (3.9GB).
-Flow Matching: `checkpoints/flow_policy_v4/20260420_034314/best_model.pt` (best val=0.0630).
-See [RESEARCH_PLAN_v4.md](RESEARCH_PLAN_v4.md) for the full v4.0 roadmap.
-See [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md) for v3.x detailed training analysis.
+**Experts**
+- **State-based PPO expert** (`models/ppo_expert.py`, `scripts/train_ppo_expert_v4.py`):
+  - the oracle;
+  - the demonstrator for the initial "H4" BC policy and for the Dispersive study.
+- **Cascade PID-CTBR teacher** (`controllers/pid_controller.py`):
+  - produced all hover and far-range demonstrations for Tables 6–7, through `scripts/collect_data_v7_pidctbr.py`;
+  - one teacher was used for both, so the teacher axis changes only data coverage.
 
 ---
 
-## Quick Start / 快速開始
+## Key results
 
-### Installation
+How to read the tables:
+- Every row is the **mean ± std over 3 training seeds**.
+- Each seed is scored with the frozen protocol: 30 paired episodes.
+- cond-IAE is in metres; lower is better.
+- State oracle: 0.068 m.
+
+**1. Dispersive × encoder (Table 2 in the draft).**
+- The decisive comparison is D1E1 vs D0E1.
+- Sources: `docs/paper_negative_result_draft.md` §5 and `docs/experiment_report_faithful_dispersive.md`.
+
+| Cell | Dispersive / encoder | Tier-1 % | Survival % | cond-IAE |
+|---|---|---:|---:|---:|
+| D0E0 | off / frozen | 87.8 ± 3.1 | 66.1 ± 3.7 | 2.93 |
+| D1E0 | on / frozen | 74.4 ± 8.7 | 60.4 ± 1.6 | 2.81 |
+| D0E1 | off / trainable | 92.2 ± 3.1 | 65.0 ± 2.8 | 2.91 |
+| D1E1 | on / trainable | 90.0 ± 5.4 | 62.9 ± 2.4 | 2.89 |
+
+**2. Teacher coverage × observation (Table 6).**
+- **T1** adds far-range recovery demonstrations from the PID-CTBR teacher.
+- **O1** replaces the crosshair target with a perspective target. The crosshair stops changing size at far range; the perspective target encodes range.
+- Sources: §6.4 and `docs/experiment_report_p2to_decisive.md`.
+
+| Cell | Teacher / observation | cond-IAE | Survival % | Tier-1 % |
+|---|---|---:|---:|---:|
+| T0O0 | hover only / crosshair | 2.69 ± 0.15 | 83.2 ± 5.8 | 98.9 ± 1.6 |
+| T0O1 | hover only / perspective | 2.48 ± 0.14 | 76.7 ± 10.5 | 86.7 ± 9.8 |
+| T1O0 | + far-range / crosshair | 2.71 ± 0.22 | 91.4 ± 1.5 | 100.0 ± 0.0 |
+| T1O1 | + far-range / perspective | 2.93 ± 0.18 | 90.6 ± 3.3 | 98.9 ± 1.6 |
+
+What the table shows:
+- **Floor:** T1O1 vs T0O0 differs by Δ = +0.24 m, against a pooled std of 0.23 m. The floor did not break.
+- **Coverage:** adding far-range data raised survival but did not improve precision.
+- **Perspective column:** adding coverage made precision worse (2.48 → 2.93 m).
+
+**3. Capacity ladder (Table 7).**
+- The T1O1 recipe is held fixed. Only `flow_net` `down_dims` changes.
+- Sources: §6.5 and `docs/experiment_report_p2cap_capacity.md`.
+
+| Rung | `down_dims` | Trainable params | cond-IAE | Survival % | Tier-1 % |
+|---|---|---:|---:|---:|---:|
+| S (= T1O1) | (256, 512) | 13.5 M | 2.93 ± 0.18 | 90.6 ± 3.3 | 98.9 |
+| M | (256, 512, 768) | 35.0 M | 2.67 ± 0.26 | 86.7 ± 2.3 | 100.0 |
+| XL | (512, 1024) | 44.0 M | 2.63 ± 0.19 | 86.6 ± 6.7 | 94.4 |
+
+What the table shows:
+- **Size of the gain:** 3.3× more parameters lowered cond-IAE by about 0.3 m. The gain is already flattening: M → XL improves by only 0.04 m. XL is still about 39× the oracle error.
+- **Confound:** XL's wider `flow_net` could not reuse the transferred weights, so it was trained from scratch. The XL-vs-S gap therefore mixes capacity with initialisation.
+- **M vs S:** M was partially transferred. Its gap to S (−0.26 m) is inside seed noise (pooled std 0.32 m) (`docs/experiment_report_p2cap_capacity.md`, rung table and verdict).
+
+**Also in the write-up:**
+- feature-geometry measurements: Dispersive Loss inflates the feature norm instead of raising the effective rank (§6.1, Table 5);
+- the sensing gate and the range-cue intervention (§6.3);
+- two baselines, BC-vision-only and PPO-from-pixels (§4, Table 1).
+
+---
+
+## Evaluation protocol
+
+`scripts/evaluate_frozen_p0.py` fixes one protocol so that numbers stay comparable across runs.
+
+- **Paired initial conditions.** Episode *i* uses `seed = 12345 + i` for three things: the environment, the global NumPy RNG (visual domain randomisation) and torch (flow noise). Every model therefore starts from the same conditions.
+- **Survival and Tier-1.**
+  - Survival is the mean fraction of the 500-step episode flown.
+  - Tier-1 is the fraction of episodes that fly at least half the horizon (≥ 250 steps), defined at `scripts/evaluate_hierarchical.py:166`.
+- **cond-IAE.**
+  - It is the mean position-error norm over the second half of each episode (`scripts/evaluate_hierarchical.py:134`).
+  - It is averaged **only over episodes that survived ≥ 250 steps**, and reported together with `n_cond`, the number of such episodes.
+  - Despite the name, it is a mean distance in metres, not an integral.
+  - The all-episode version is still reported but flagged, because early crashes make it look better than it is.
+- **Bootstrap 95 % CI.** Percentile CIs over episodes, for the composite score and for survival.
+- **Seed variation.** Every retrained model is reported as the mean ± std over 3 training seeds. On a single seed, the PPO-from-pixels baseline swung between 0 % and 47 % Tier-1.
+- **Decision rule and "pooled std".**
+  - "Pooled std" is the root-sum-square of the two cells' across-seed stds, i.e. the std of the difference of means (`scripts/evaluate_p2_ablation.py:138`, `scripts/evaluate_p2to_ablation.py`).
+  - The stds use ddof=0 over 3 seeds, so they understate the sample std by about 18 %.
+- **Measured oracle.**
+  - The state-based PPO oracle runs through the same protocol (`--oracle-ckpt` / `--oracle-norm`): 100 % survival, 0.068 m, composite 0.9668.
+  - This replaces an older hard-coded 0.85. The script still falls back to 0.85 when no oracle checkpoint is given.
+
+---
+
+## Reproduce
+
+> **Not included:** datasets (`data/*.h5`), checkpoints (`checkpoints/`) and result JSONs (`evaluation_results/`) are gitignored. You have to collect the data and train the models yourself.
+>
+> **Original environment:** a single RTX 3090 on Windows, with a venv in `dppo/` (also gitignored). Run every command from the repo root.
 
 ```bash
-git clone <repository-url>
-cd DPPO_PID_controller
-
-python -m venv dppo
-source dppo/bin/activate          # Linux/macOS
-# .\\dppo\\Scripts\\activate         # Windows
-
 pip install -r requirements.txt
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-```
+python check_device.py                      # confirms CUDA is visible
 
-### Training Pipeline
+# 1) State-based PPO expert (= oracle; demonstrator for H4 and the Dispersive study)
+python -m scripts.train_ppo_expert_v4       # -> checkpoints/ppo_expert_v4/<ts>/best_model.pt, best_obs_rms.npz
+EXP=checkpoints/ppo_expert_v4/<ts>
 
-#### v4.0 (Current — CTBR + INDI + Flow Matching + ReinFlow)
+# 2) FPV demonstrations
+python -m scripts.collect_data_v4          --model $EXP/best_model.pt --norm $EXP/best_obs_rms.npz   # data/expert_demos_v4.h5
+python -m scripts.collect_data_v4_recovery --model $EXP/best_model.pt --norm $EXP/best_obs_rms.npz   # data/expert_demos_v4_recovery.h5
+python -m scripts.collect_data_v7_pidctbr --mode hover   # PID-CTBR teacher -> data/expert_demos_v7_hover_{crosshair,persp}.h5
+python -m scripts.collect_data_v7_pidctbr --mode far     # PID-CTBR teacher -> data/expert_demos_v7_far_{crosshair,persp}.h5
 
-**Step 1: Train CTBR PPO Expert**
-
-```bash
-python -m scripts.train_ppo_expert_v4 --n-envs 8
-tensorboard --logdir ./logs/ppo_expert_v4/
-```
-
-Gate criteria: RMSE < 0.08m, crash = 0/50.
-
-**Step 2: Collect CTBR Expert Data (pending)**
-
-```bash
-python -m scripts.collect_data_v4 \
-    --model checkpoints/ppo_expert_v4/.../best_model.pt \
-    --norm  checkpoints/ppo_expert_v4/.../best_obs_rms.npz \
-    --output data/expert_demos_v4.h5
-```
-
-**Step 3–4: Flow Matching + ReinFlow (pending Phase 1 gate)**
-
-```bash
+# 3) Shared initialisation (the "H4" BC policy, trained on data/expert_demos_v4.h5)
 python -m scripts.train_flow_v4 --config configs/flow_policy_v4.yaml
-python -m scripts.train_reinflow_v4 --pretrained checkpoints/flow_v4/.../best_model.pt
+H4=checkpoints/flow_policy_v4/<ts>/best_model.pt
+ORACLE="--oracle-ckpt $EXP/best_model.pt --oracle-norm $EXP/best_obs_rms.npz"
+
+# 4a) Dispersive x encoder 2x2 (faithful Dispersive)
+python -m scripts.run_p2_ablation --faithful --h4-ckpt $H4
+python -m scripts.evaluate_p2_ablation --manifest evaluation_results/p2f_ablation_manifest.json \
+    --output evaluation_results/p2f_ablation_leaderboard.json $ORACLE
+
+# 4b) Teacher x Observation 2x2
+python -m scripts.run_p2to_ablation --h4-ckpt $H4
+python -m scripts.evaluate_p2to_ablation $ORACLE
+
+# 4c) Capacity ladder (rung S reuses the T1O1 checkpoints from 4b)
+python -m scripts.run_p2cap_ablation --h4-ckpt $H4
+python -m scripts.evaluate_p2cap_ablation $ORACLE
+
+# Figures and the HTML/PDF write-up (both read evaluation_results/; see notes below)
+python scripts/make_paper_figures.py
+python scripts/export_paper.py
 ```
 
-#### v3.x (Historical Reference)
-
-**Step 1: Train PPO Expert (must meet gate before proceeding)**
-
-```bash
-python -m scripts.train_ppo_expert
-tensorboard --logdir ./logs/ppo_expert/
-```
-
-Gate criteria: mean position error < 0.1m, crash rate = 0, episodes < 0.1m > 40/50.
-
-**Step 2: Collect Expert Data**
-
-```bash
-python -m scripts.collect_data \
-    --ppo-model checkpoints/ppo_expert/.../best_model.pt \
-    --ppo-norm checkpoints/ppo_expert/.../best_obs_rms.npz
-```
-
-**Step 3: Train Diffusion Policy**
-
-```bash
-python -m scripts.train_diffusion --config configs/diffusion_policy.yaml
-```
-
-**Step 4: DPPO Fine-tuning (with Dispersive Loss)**
-
-```bash
-python -m scripts.train_dppo \
-    --pretrained checkpoints/diffusion_policy/.../best_model.pt
-```
-
-**Step 5: Closed-Loop Evaluation**
-
-```bash
-python -m scripts.evaluate_rhc \
-    --diffusion-model checkpoints/diffusion_policy/.../best_model.pt \
-    --ppo-model checkpoints/ppo_expert/.../best_model.pt \
-    --ppo-norm checkpoints/ppo_expert/.../best_obs_rms.npz
-```
+Notes on these commands:
+- **Driver flags.** Each `run_*` driver accepts two flags:
+  - `--dry-run` prints the training commands without launching them;
+  - `--quick` runs a short smoke test.
+- **`make_paper_figures.py` needs every study's results.** It reads the result JSONs of *all* the studies listed under *Reproducibility / Artifacts* in the draft: the baselines, feature geometry, sensing probes and the legacy P2 run. Steps 4a–4c alone are not enough, and the script stops with `FileNotFoundError`.
+- **`export_paper.py` has extra requirements.**
+  - It needs `pip install markdown`, which is not in `requirements.txt`.
+  - It needs a Chromium binary for the PDF. It finds one automatically only at the Windows Chrome/Edge install paths. On any other system, pass `--browser /path/to/chrome`, or it produces HTML only.
+- **Other scripts.** The draft's *Reproducibility / Artifacts* section lists the scripts for every table and figure. That includes the baselines, the feature-geometry measurements, the sensing probes and the scale-invariant regulariser runs.
 
 ---
 
-## Project Structure / 專案結構
+## Repo map
 
-```
-DPPO_PID_controller/
-├── configs/
-│   ├── quadrotor.yaml           # Physics parameters (v3.x SRT)
-│   ├── quadrotor_v4.yaml        # Physics parameters (v4.0 CTBR + INDI)  ← NEW
-│   ├── ppo_expert.yaml          # PPO hyperparameters (v3.x)
-│   ├── ppo_expert_v4.yaml       # PPO hyperparameters (v4.0 CTBR)        ← NEW
-│   └── diffusion_policy.yaml    # Diffusion policy hyperparameters
-│
-├── envs/
-│   ├── quadrotor_dynamics.py    # Pure 6-DOF physics (quaternion, RK4, motors)
-│   ├── quadrotor_env.py         # SRT env (15D obs, 4D motor thrust)
-│   ├── quadrotor_env_v4.py      # CTBR env + INDI rate controller         ← NEW
-│   └── quadrotor_visual_env.py  # FPV image rendering wrapper
-│
-├── models/
-│   ├── ppo_expert.py            # Actor-Critic PPO (TanhNormal distribution)
-│   ├── vision_encoder.py        # CNN (current) → ViT (target upgrade)
-│   ├── conditional_unet1d.py    # 1D U-Net (FiLM conditioning)
-│   ├── diffusion_process.py     # DDPM/DDIM forward + reverse process
-│   ├── diffusion_policy.py      # Baseline policy (with D²PPO loss)
-│   └── vision_dppo_v31.py       # v3.1 policy (IMU Late Fusion + FCN Depth)
-│
-├── scripts/
-│   ├── train_ppo_expert.py      # Phase 1 (v3.x SRT)
-│   ├── train_ppo_expert_v4.py   # Phase 1 v4.0 (CTBR + INDI)              ← NEW
-│   ├── collect_data.py          # Phase 2 (--v31 / --v32 flags for IMU+depth)
-│   ├── train_diffusion.py       # Phase 3a (baseline)
-│   ├── train_diffusion_v31.py   # Phase 3a v3.1 (finite-diff IMU — historical)
-│   ├── train_diffusion_v32.py   # Phase 3a v3.2 (physics IMU, un-normalised — historical)
-│   ├── train_diffusion_v33.py   # Phase 3a v3.3 (physics IMU + normalisation — current)
-│   ├── train_dppo.py            # Phase 3b (baseline DPPO)
-│   ├── train_dppo_v31.py        # Phase 3c v3.1 (abandoned — finite-diff IMU)
-│   ├── train_dppo_v32.py        # Phase 3c v3.2 (aborted — un-normalised IMU)
-│   ├── train_dppo_v33.py        # Phase 3c v3.3 (current — normalised physics IMU)
-│   ├── evaluate_rhc.py          # Phase 4 (baseline)
-│   ├── evaluate_rhc_v31.py      # Phase 4 v3.1 (historical)
-│   ├── evaluate_rhc_v32.py      # Phase 4 v3.2 (historical)
-│   └── evaluate_rhc_v33.py      # Phase 4 v3.3 (current)
-│
-├── docs/
-│   ├── dev_log.md               # Phase 1 training log (PPO Expert)
-│   ├── dev_log_phase2_3.md      # Dev log index (Phase 2–3c) ← start here
-│   ├── dev_log_phase2.md        # Phase 2: expert data collection
-│   ├── dev_log_phase3a.md       # Phase 3a: supervised pre-training + bug audits
-│   ├── dev_log_phase3b.md       # Phase 3b: DPPO Runs 1–3 + lessons learned
-│   ├── dev_log_phase3c_v31.md   # Phase 3c v3.1: IMU late fusion, Runs 1–2
-│   ├── dev_log_phase3c_v32.md   # Phase 3c v3.2: physics IMU, current run
-│   ├── architecture.md          # Full architecture diagrams (all versions)
-│   ├── phase3c_action_plan.md   # Phase 3c decision log & next steps
-│   └── TOP_CONF_GUIDE.md        # Conference submission guide (CoRL/ICRA/RSS)
-│
-└── utils/
-    ├── training_metrics.py
-    └── visualization.py
-```
+| Path | What it is |
+|---|---|
+| `envs/` | 6-DOF dynamics (RK4), CTBR + INDI environment (`quadrotor_env_v4.py`), FPV renderer (`quadrotor_visual_env.py`) |
+| `models/` | Current: `flow_policy_v5.py`, `vision_encoder_v5.py`, `conditional_unet1d.py`, `ppo_expert.py`, `ppo_pixel.py`. Older generations: `flow_policy_v4.py`, `diffusion_policy.py`, `vision_dppo_v31.py`, … |
+| `controllers/` | `pid_controller.py`: the cascade PID-CTBR teacher |
+| `configs/` | YAML for the simulator, the PPO expert, the flow policies and RL fine-tuning |
+| `scripts/` | Training, data collection, evaluation (`evaluate_frozen_p0.py`), ablation drivers (`run_p2*` / `evaluate_p2*`), diagnostics (`measure_*`), paper tools (`make_paper_figures.py`, `export_paper.py`). Also holds scripts from earlier versions (`*_v31`, `*_v33`, `train_dppo*.py`, `train_reinflow_*.py`). |
+| `docs/` | The write-up draft (`.md` / `.html` / `.pdf`), `experiment_report_*.md`, `dev_log*.md`. `architecture.md` is the v4.0 diagram from May 2026: it shows the earlier RL fine-tuning pipeline, not the final v5 policy above. |
+| `utils/` | Helpers for metric logging and plotting |
+| `presentation/` | Progress-report slides from May 2026, made before the final results |
+| `RESEARCH_PLAN*.md` | The plan for each research stage |
+| `data/` | Empty placeholder (`.gitkeep`). Datasets are not committed. |
+| `CLAUDE.md`, `gemini.md`, `setup_claude_code.sh`, `docs/*guide*.md` | AI-assistant working notes and setup files. They are internal notes, not results. Some lines in them are out of date (for example, target venues and hardware deployment). Where they disagree with this README, this README is current. |
 
 ---
 
-## MDP Definition / MDP 定義
+## Write-up
 
-**Observation Space (15D):**
+**Draft**
+- Read the PDF: [`docs/paper_negative_result_draft.pdf`](docs/paper_negative_result_draft.pdf). It is also available as [HTML](docs/paper_negative_result_draft.html). Both have the figures embedded.
+- The [Markdown source](docs/paper_negative_result_draft.md) links to `docs/figures/*.png`, but `*.png` is gitignored, so **the images do not render in the `.md` view on GitHub.**
 
-| Dims | Content | Design Rationale |
-|------|---------|-----------------|
-| 0-2 | Body-frame position error `R^T(p_target - p)` | Rotation invariant |
-| 3-8 | 6D rotation (first 2 columns of R) | Gimbal-lock free |
-| 9-11 | Body-frame linear velocity `R^T v` | Rotation invariant |
-| 12-14 | Body-frame angular velocity `ω` | Attitude control signal |
+**Known overstatements in the draft.** Where the draft and this README differ, use this README:
+- The draft says "pre-registered". The plans and the results were committed together, so the order in which they were written cannot be proven.
+- The title and abstract say the tested factors are ruled out, for example "…Is Not the Bottleneck — and Neither Is Coverage or Sensing". Three seeds can only show that they were not supported.
+- The draft says the results and artifacts are released, and that "every number is reproducible from the cited artifact". The result JSONs and checkpoints are not in this repo.
 
-**Action Space (4D):** Normalized motor thrusts `[-1,1]` → `[0, f_max]`
-
-**Reward Function (Gaussian-based):**
-
-```
-R = w_pos × exp(−||pos_err||² / σ_pos)
-  + w_vel × exp(−||vel||²    / σ_vel)
-  + w_ang × exp(−||ang_vel||² / σ_ang)
-  − w_action × ||action||²
-  + alive_bonus
-```
-
-Current tuning focus (Run 4): `sigma_pos=0.10`, `w_action=0.01`, `alive_bonus=0.0`
-
-**Timing Configuration:**
-
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| Physics Δt | 0.005s (200Hz) | RK4 integration |
-| RL Decision Δt | 0.02s (50Hz) | Motor command update |
-| RHC Replan Rate | 12.5Hz (current) → 62Hz+ (target) | Every T_action steps |
+**Experiment reports** (one per study)
+- [faithful Dispersive](docs/experiment_report_faithful_dispersive.md)
+- [feature collapse](docs/experiment_report_feature_collapse.md)
+- [scale-invariant forms](docs/experiment_report_p6_scale_invariant.md)
+- [survival movers](docs/experiment_report_survival_movers.md)
+- [OOD coverage](docs/experiment_report_ood_coverage.md)
+- [image–distance information](docs/experiment_report_image_distance_info.md)
+- [sensing ablation](docs/experiment_report_sensing_ablation.md)
+- [teacher/renderer gates](docs/experiment_report_p0_teacher_renderer_gates.md)
+- [dataset collection](docs/experiment_report_p3_dataset_collection.md)
+- [Teacher × Observation](docs/experiment_report_p2to_decisive.md)
+- [capacity ladder](docs/experiment_report_p2cap_capacity.md)
+- [joint training](docs/experiment_report_joint_e2e.md)
 
 ---
 
-## Evaluation Metrics / 評估指標
+## History
 
-### 新框架：飛→穩→準 Hierarchical Score (2026-06-04+，指數衰減型)
-
-| Checkpoint | Score | Survive | IAE_steady | Terminal | 詮釋 |
-|-----------|-------|---------|------------|----------|------|
-| **H4 BC**（v4.0 SOTA） | **0.171** | 38.8% | 1.325m | 2.426m | 純 BC，無 RL，高頻精準度高 |
-| **Joint_E2E_v5**（2026-06-03） | **0.073** | **60.1%** | 2.852m | 4.961m | 端到端聯合訓練，生存率最高，唯漂移略大 |
-| v5.0 OOB Pretrain BC | 0.112 | 49.0% | 1.773m | 3.074m | 舊線性指標分數，存活高，漂移大 |
-| H3a BC | 0.151 | 43.6% | 1.656m | 2.839m | 上一代架構（舊線性指標分數）|
-| v5.0 Stage D Best | 0.073 | 55.2% | 2.259m | 3.852m | flow_net 重訓對齊失敗（舊線性指標分數）|
-| Run23_RL（RL 最佳）| 0.093 | 18.6% | 0.770m | 1.272m | 舊指標微懸停，但生存極差 |
-| PPO Expert（理論上限） | ~0.85 | 100% | 0.065m | 0.065m | state-based oracle |
-
-### 傳統指標（含 RMSE 偏誤警告）
-
-| Metric | PPO Expert (state) | v4.0 H4 BC (vision) | Joint_E2E_v5 (vision) | Target | 註釋 |
-|--------|-------------------|---------------------|-----------------------|--------|------|
-| Position RMSE | 0.065m | 1.070m | 2.271m | < 0.15m | **RMSE 偏袒短命 policy，已知偏誤** |
-| Crash Rate | 0% (0/50) | 61.2% | 39.9% | < 50% | Survival rate 是更可靠指標 |
-| Inference Latency | — | 14ms (2-step) | 14ms (2-step) | <16ms ✓ | 達標 |
-| Control Frequency | — | 50Hz (T_action=1) | 50Hz (T_action=1) | >62Hz | 略低於目標但可接受 |
-| Hierarchical Score | ~0.85 | 0.171 | 0.073 | > 0.50 | 主要 SOTA 指標 |
-
-**Status note:** v5.0 pipeline through Stages A–D originally failed due to separate pretraining, but subsequent **Joint End-to-End Training (2026-06-03)** succeeded in training the encoder and action head jointly on mixed data, lifting survival to **60.1%** (+55% relative increase). The evaluation metric was also refactored to use exponential decay ($e^{-e}$) to resolve hard clipping. See [docs/experiment_report_joint_e2e.md](docs/experiment_report_joint_e2e.md).
+- **The original plan:**
+  - a diffusion policy with a ViT encoder (never implemented; the encoder was always a CNN);
+  - one-step distillation;
+  - per-motor commands as the action space. These were later replaced by thrust + body-rate (CTBR) commands over an INDI rate loop.
+- **How it ended:**
+  - More than two dozen ReinFlow/AWR-style RL fine-tuning runs degraded (`docs/dev_log_v4_h4_hierarchical.md`).
+  - A later masked-advantage RL run (v5_RL_best, Table 1) turned out to be an artifact of short survival under the frozen protocol: only 4 of 30 episodes reached the cond-IAE threshold.
+  - The work then moved to BC flow matching and the frozen evaluation protocol.
+- **Old README:** in the git history (the version of `README.md` before this one). It describes the original plan, not the results.
+- **Plans:** [`RESEARCH_PLAN_v6.md`](RESEARCH_PLAN_v6.md) through [`RESEARCH_PLAN_v9.md`](RESEARCH_PLAN_v9.md). v9 is a follow-up plan, and the write-up does not report its results.
+- **Development logs:** `docs/dev_log*.md`.
+- **Earliest commits:** the Nov 2025 commits belong to an earlier PID-tuning experiment in the same repository. The vision work starts in March 2026.
 
 ---
 
-## References / 參考文獻
+## How this was built
 
-1. Chi et al. (2023). "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion." *RSS*
-2. Zou et al. (2025). "D²PPO: Diffusion Policy Policy Optimization with Dispersive Loss." *arXiv:2508.02644*
-3. Ze et al. (2024). "One-Step Diffusion Policy." *arXiv:2410.21257*
-4. Ren et al. (2024). "Diffusion Policy Policy Optimization." *OpenReview:mEpqHvbD2h*
-5. Kaufmann et al. (2023). "Champion-level drone racing using deep reinforcement learning." *Nature*
-6. Schulman et al. (2017). "Proximal Policy Optimization Algorithms." *arXiv:1707.06347*
+I used Claude Code as a pair programmer for implementation and for drafting documents. The research questions, the experimental decisions and the conclusions are mine. `CLAUDE.md` holds the working rules the assistant followed.
 
 ---
 
-## License / 許可證
+## License
 
-MIT License
-
----
-
-**Dev log index (Phase 2–3c) → [docs/dev_log_phase2_3.md](docs/dev_log_phase2_3.md)**
-**Phase 1 training log → [docs/dev_log.md](docs/dev_log.md)**
-**Architecture diagrams → [docs/architecture.md](docs/architecture.md)**
-**Conference submission guide → [docs/TOP_CONF_GUIDE.md](docs/TOP_CONF_GUIDE.md)**
+All rights reserved: no open-source license has been added.
